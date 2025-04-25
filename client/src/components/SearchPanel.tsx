@@ -1,97 +1,109 @@
 import { useState } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
 import { Button } from "@/components/ui/button";
+import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { useToast } from "@/hooks/use-toast";
-import { Check, Link } from "lucide-react";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+
+// Create schema for URL validation
+const formSchema = z.object({
+  url: z.string()
+    .url({ message: "Please enter a valid URL" })
+    .refine(url => url.startsWith("http://") || url.startsWith("https://"), {
+      message: "URL must start with http:// or https://",
+    }),
+});
 
 interface SearchPanelProps {
   onAnalyze: (url: string) => void;
+  isLoading: boolean;
 }
 
-export default function SearchPanel({ onAnalyze }: SearchPanelProps) {
-  const [url, setUrl] = useState("");
-  const [error, setError] = useState("");
-  const { toast } = useToast();
+export default function SearchPanel({ onAnalyze, isLoading }: SearchPanelProps) {
+  // Define form
+  const form = useForm<z.infer<typeof formSchema>>({
+    resolver: zodResolver(formSchema),
+    defaultValues: {
+      url: "",
+    },
+  });
 
-  const validateUrl = (url: string): boolean => {
-    try {
-      new URL(url);
-      return true;
-    } catch (e) {
-      return false;
-    }
-  };
-
-  const handleAnalyze = () => {
-    if (!url.trim()) {
-      setError("Please enter a URL");
-      return;
-    }
-
-    if (!validateUrl(url)) {
-      setError("Please enter a valid URL");
-      return;
-    }
-
-    setError("");
-    onAnalyze(url);
-  };
+  // Submit handler
+  function onSubmit(values: z.infer<typeof formSchema>) {
+    onAnalyze(values.url);
+  }
 
   return (
-    <section className="mb-10">
-      <div className="bg-white rounded-lg shadow-card p-6 max-w-4xl mx-auto">
-        <h2 className="text-2xl font-medium text-gray-800 mb-6">Competitive Content Analysis</h2>
-        <p className="text-gray-600 mb-6">
-          Enter your website URL to discover your competitors' top-performing content and keyword strategies.
-        </p>
-        
-        <div className="flex flex-col md:flex-row gap-4">
-          <div className="flex-grow relative">
-            <div className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400">
-              <Link size={20} />
-            </div>
-            <Input
-              type="url"
-              placeholder="https://yourdomain.com"
-              className="w-full py-3 pl-10 pr-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition duration-200 outline-none"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              onKeyUp={(e) => e.key === "Enter" && handleAnalyze()}
+    <Card className="w-full">
+      <CardHeader>
+        <CardTitle className="text-2xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
+          Discover Competitor Content Insights
+        </CardTitle>
+        <CardDescription>
+          Enter a website URL to analyze competitor content and discover trending keywords
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            <FormField
+              control={form.control}
+              name="url"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Website URL</FormLabel>
+                  <FormControl>
+                    <div className="flex gap-2">
+                      <Input 
+                        placeholder="https://example.com" 
+                        {...field} 
+                        className="flex-1"
+                      />
+                      <Button 
+                        type="submit" 
+                        disabled={isLoading}
+                        className="bg-gradient-to-r from-primary to-secondary hover:from-primary/90 hover:to-secondary/90 text-white"
+                      >
+                        {isLoading ? "Analyzing..." : "Analyze"}
+                      </Button>
+                    </div>
+                  </FormControl>
+                  <FormDescription>
+                    Enter the URL of the website you want to analyze
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
             />
-            {error && <div className="text-destructive text-sm mt-1">{error}</div>}
+          </form>
+        </Form>
+
+        <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="flex flex-col items-center text-center p-4 rounded-lg bg-muted/50">
+            <div className="text-3xl font-bold mb-2">01</div>
+            <h3 className="text-lg font-medium">Enter Website URL</h3>
+            <p className="text-sm text-muted-foreground">
+              Provide any website URL you want to analyze
+            </p>
           </div>
-          
-          <Button 
-            className="bg-primary hover:bg-primary-dark text-white px-6 py-3 rounded-lg transition duration-200 flex items-center justify-center shadow-md min-w-[120px]"
-            onClick={handleAnalyze}
-          >
-            Analyze
-          </Button>
-        </div>
-        
-        <div className="mt-4 flex flex-wrap gap-2">
-          <div className="flex items-center text-xs text-gray-500">
-            <Check className="text-sm mr-1" size={14} />
-            <span>Google Search</span>
+          <div className="flex flex-col items-center text-center p-4 rounded-lg bg-muted/50">
+            <div className="text-3xl font-bold mb-2">02</div>
+            <h3 className="text-lg font-medium">Analyze Content</h3>
+            <p className="text-sm text-muted-foreground">
+              Our AI scans for top competitor content and keywords
+            </p>
           </div>
-          <div className="flex items-center text-xs text-gray-500">
-            <Check className="text-sm mr-1" size={14} />
-            <span>Bing Search</span>
-          </div>
-          <div className="flex items-center text-xs text-gray-500">
-            <Check className="text-sm mr-1" size={14} />
-            <span>DuckDuckGo</span>
-          </div>
-          <div className="flex items-center text-xs text-gray-500">
-            <Check className="text-sm mr-1" size={14} />
-            <span>Competitor Analysis</span>
-          </div>
-          <div className="flex items-center text-xs text-gray-500">
-            <Check className="text-sm mr-1" size={14} />
-            <span>Keyword Extraction</span>
+          <div className="flex flex-col items-center text-center p-4 rounded-lg bg-muted/50">
+            <div className="text-3xl font-bold mb-2">03</div>
+            <h3 className="text-lg font-medium">Get Insights</h3>
+            <p className="text-sm text-muted-foreground">
+              Receive strategic content recommendations
+            </p>
           </div>
         </div>
-      </div>
-    </section>
+      </CardContent>
+    </Card>
   );
 }

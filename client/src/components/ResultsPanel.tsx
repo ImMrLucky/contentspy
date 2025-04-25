@@ -1,8 +1,8 @@
 import { CompetitorContent } from "@/lib/types";
-import CompetitorContentItem from "@/components/CompetitorContentItem";
-import { Button } from "@/components/ui/button";
-import { ChevronDown, Bookmark, Download } from "lucide-react";
-import { useState } from "react";
+import CompetitorContentItem from "./CompetitorContentItem";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Award, BookOpen, Search } from "lucide-react";
 
 interface ResultsPanelProps {
   analyzedUrl: string;
@@ -10,76 +10,64 @@ interface ResultsPanelProps {
 }
 
 export default function ResultsPanel({ analyzedUrl, results }: ResultsPanelProps) {
-  const [displayLimit, setDisplayLimit] = useState(3);
-  
-  const handleLoadMore = () => {
-    setDisplayLimit(prevLimit => prevLimit + 3);
-  };
-  
-  if (!results || results.length === 0) return null;
-  
+  // Group results by domain
+  const domainGroups = results.reduce((groups, result) => {
+    const domain = result.domain;
+    if (!groups[domain]) {
+      groups[domain] = [];
+    }
+    groups[domain].push(result);
+    return groups;
+  }, {} as Record<string, CompetitorContent[]>);
+
   return (
-    <section className="mb-10">
-      <div className="bg-white rounded-lg shadow-card p-6">
-        <div className="flex justify-between items-center mb-6">
-          <h2 className="text-xl font-medium text-gray-800">Analysis Results</h2>
-          <div className="flex items-center space-x-4">
-            <span className="text-sm text-gray-500">
-              Analyzed: <span className="font-medium">{analyzedUrl}</span>
-            </span>
-            <span className="flex items-center text-sm text-gray-500">
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-success mr-1">
-                <circle cx="12" cy="12" r="10"></circle>
-                <polyline points="12 6 12 12 16 14"></polyline>
-              </svg>
-              Just now
-            </span>
-          </div>
+    <Card className="w-full">
+      <CardHeader>
+        <div className="flex items-center space-x-2">
+          <Award className="h-5 w-5 text-primary" />
+          <CardTitle>Top Competitor Content</CardTitle>
         </div>
-
-        <div className="mb-4">
-          <div className="p-4 bg-gray-50 rounded-md border border-gray-200">
-            <h3 className="text-lg font-medium">Top Competitor Content</h3>
-            <p className="text-sm text-gray-600 mt-1">
-              We found {results.length} high-performing competitor articles related to your domain.
-            </p>
-          </div>
-        </div>
-
-        {results.slice(0, displayLimit).map((content, index) => (
-          <CompetitorContentItem key={index} content={content} />
-        ))}
-
-        {displayLimit < results.length && (
-          <div className="flex justify-center mt-6">
-            <Button 
-              variant="outline"
-              className="bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 font-medium px-4 py-2 rounded-lg transition duration-200 flex items-center"
-              onClick={handleLoadMore}
-            >
-              <ChevronDown className="mr-1 h-4 w-4" />
-              <span>Load More Results</span>
-            </Button>
-          </div>
-        )}
-      </div>
-
-      <div className="flex justify-end mt-4">
-        <Button 
-          variant="ghost"
-          className="hover:bg-gray-100 text-primary px-4 py-2 rounded-lg transition duration-200 flex items-center mr-2"
-        >
-          <Bookmark className="mr-1 h-4 w-4" />
-          <span>Save Report</span>
-        </Button>
-        <Button 
-          variant="ghost"
-          className="hover:bg-gray-100 text-primary px-4 py-2 rounded-lg transition duration-200 flex items-center"
-        >
-          <Download className="mr-1 h-4 w-4" />
-          <span>Export as CSV</span>
-        </Button>
-      </div>
-    </section>
+        <CardDescription>
+          Top-performing content from competitors to {analyzedUrl.replace(/^https?:\/\//, '')}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Tabs defaultValue="all" className="w-full">
+          <TabsList className="grid w-full auto-cols-fr grid-flow-col mb-6">
+            <TabsTrigger value="all" className="flex items-center gap-1">
+              <BookOpen className="h-4 w-4" />
+              <span>All Content ({results.length})</span>
+            </TabsTrigger>
+            <TabsTrigger value="byDomain" className="flex items-center gap-1">
+              <Search className="h-4 w-4" />
+              <span>By Domain ({Object.keys(domainGroups).length})</span>
+            </TabsTrigger>
+          </TabsList>
+          
+          <TabsContent value="all" className="w-full mt-0">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {results.map((result) => (
+                <CompetitorContentItem key={result.id} content={result} />
+              ))}
+            </div>
+          </TabsContent>
+          
+          <TabsContent value="byDomain" className="mt-0">
+            <div className="space-y-6">
+              {Object.entries(domainGroups).map(([domain, domainResults]) => (
+                <div key={domain} className="space-y-3">
+                  <h3 className="text-lg font-semibold">{domain}</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {domainResults.map((result) => (
+                      <CompetitorContentItem key={result.id} content={result} />
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </TabsContent>
+        </Tabs>
+      </CardContent>
+    </Card>
   );
 }

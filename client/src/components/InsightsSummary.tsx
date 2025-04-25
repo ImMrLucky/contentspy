@@ -1,68 +1,101 @@
 import { InsightsSummary as InsightsSummaryType } from "@/lib/types";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { FileText, Users, TrendingUp, PieChart } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 
 interface InsightsSummaryProps {
   insights: InsightsSummaryType;
 }
 
 export default function InsightsSummary({ insights }: InsightsSummaryProps) {
-  const getColorClass = (color: string) => {
-    switch (color) {
-      case 'primary': return 'bg-primary-light';
-      case 'secondary': return 'bg-secondary-light';
-      case 'accent': return 'bg-accent-light';
-      case 'success': return 'bg-success bg-opacity-10';
-      case 'warning': return 'bg-warning bg-opacity-10';
-      case 'error': return 'bg-destructive bg-opacity-10';
-      default: return 'bg-gray-200';
-    }
-  };
-  
+  const {
+    topContentType,
+    avgContentLength,
+    keyCompetitors,
+    contentGapScore,
+    keywordClusters
+  } = insights;
+
   return (
-    <section className="mb-10">
-      <div className="bg-white rounded-lg shadow-card p-6">
-        <h2 className="text-xl font-medium text-gray-800 mb-4">Competitive Insights</h2>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          <div className="bg-primary bg-opacity-10 rounded-lg p-4">
-            <div className="text-primary-dark font-medium">Top Content Type</div>
-            <div className="text-2xl mt-1 font-medium">{insights.topContentType}</div>
-            <div className="text-sm text-gray-600 mt-1">46% of top content</div>
-          </div>
-          
-          <div className="bg-secondary bg-opacity-10 rounded-lg p-4">
-            <div className="text-secondary-dark font-medium">Avg. Content Length</div>
-            <div className="text-2xl mt-1 font-medium">{insights.avgContentLength}</div>
-            <div className="text-sm text-gray-600 mt-1">Based on top 15 articles</div>
-          </div>
-          
-          <div className="bg-accent bg-opacity-10 rounded-lg p-4">
-            <div className="text-accent-dark font-medium">Key Competitors</div>
-            <div className="text-2xl mt-1 font-medium">{insights.keyCompetitors}</div>
-            <div className="text-sm text-gray-600 mt-1">With similar content focus</div>
-          </div>
-          
-          <div className="bg-success bg-opacity-10 rounded-lg p-4">
-            <div className="text-success font-medium">Content Gap Score</div>
-            <div className="text-2xl mt-1 font-medium">{insights.contentGapScore}</div>
-            <div className="text-sm text-gray-600 mt-1">Opportunity level: Medium</div>
-          </div>
+    <Card className="w-full">
+      <CardHeader>
+        <div className="flex items-center space-x-2">
+          <TrendingUp className="h-5 w-5 text-primary" />
+          <CardTitle>Content Insights</CardTitle>
         </div>
-        
-        <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
-          <h3 className="font-medium text-gray-800 mb-2">Top Keyword Clusters</h3>
-          <div className="flex flex-wrap gap-y-3">
-            {insights.keywordClusters.map((cluster, index) => (
-              <div key={index} className="w-full md:w-1/2 lg:w-1/3">
-                <div className="flex items-center">
-                  <div className={`w-2 h-2 rounded-full ${getColorClass(cluster.color)} mr-2`}></div>
-                  <span className="text-sm font-medium">{cluster.name}</span>
-                  <span className="text-xs text-gray-500 ml-2">({cluster.count} articles)</span>
+        <CardDescription>
+          Key insights and metrics from competitor content analysis
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="space-y-6">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex flex-col space-y-2 p-4 rounded-lg bg-muted/50">
+                <div className="flex items-center text-sm font-medium text-muted-foreground">
+                  <FileText className="h-4 w-4 mr-1" />
+                  Top Content Type
                 </div>
+                <div className="text-lg font-semibold">{topContentType}</div>
               </div>
-            ))}
+              
+              <div className="flex flex-col space-y-2 p-4 rounded-lg bg-muted/50">
+                <div className="flex items-center text-sm font-medium text-muted-foreground">
+                  <PieChart className="h-4 w-4 mr-1" />
+                  Content Gap Score
+                </div>
+                <div className="text-lg font-semibold">{contentGapScore}</div>
+              </div>
+              
+              <div className="flex flex-col space-y-2 p-4 rounded-lg bg-muted/50">
+                <div className="flex items-center text-sm font-medium text-muted-foreground">
+                  <Users className="h-4 w-4 mr-1" />
+                  Key Competitors
+                </div>
+                <div className="text-lg font-semibold">{keyCompetitors}</div>
+              </div>
+              
+              <div className="flex flex-col space-y-2 p-4 rounded-lg bg-muted/50">
+                <div className="flex items-center text-sm font-medium text-muted-foreground">
+                  <FileText className="h-4 w-4 mr-1" />
+                  Avg. Content Length
+                </div>
+                <div className="text-lg font-semibold">{avgContentLength}</div>
+              </div>
+            </div>
+          </div>
+          
+          <div className="space-y-3">
+            <h3 className="text-sm font-medium text-muted-foreground">Keyword Clusters</h3>
+            <div className="flex flex-wrap gap-2">
+              {keywordClusters.map((cluster, index) => (
+                <div key={index} className="flex items-center">
+                  <Badge 
+                    variant="outline" 
+                    className={`px-3 py-1 bg-${cluster.color}/10 hover:bg-${cluster.color}/20 text-${cluster.color}-foreground border-${cluster.color}/30`}
+                  >
+                    <span className="mr-1 text-sm font-medium">{cluster.name}</span>
+                    <span className="rounded-full bg-muted px-1.5 text-xs">{cluster.count}</span>
+                  </Badge>
+                </div>
+              ))}
+            </div>
+            
+            <div className="mt-4">
+              <h3 className="text-sm font-medium text-muted-foreground mb-2">Content Gap Analysis</h3>
+              <p className="text-sm text-muted-foreground">
+                Based on the analysis, your competitors are focusing on {topContentType.toLowerCase()} 
+                with an average length of {avgContentLength}. The content gap score of {contentGapScore} 
+                indicates {parseInt(contentGapScore) > 70 ? 
+                  "significant opportunities to create unique content." : 
+                  parseInt(contentGapScore) > 50 ? 
+                    "moderate opportunities to differentiate your content." : 
+                    "that you should focus on quality over quantity."}
+              </p>
+            </div>
           </div>
         </div>
-      </div>
-    </section>
+      </CardContent>
+    </Card>
   );
 }
