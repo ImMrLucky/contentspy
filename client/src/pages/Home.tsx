@@ -6,53 +6,60 @@ import InsightsSummary from "@/components/InsightsSummary";
 import RecommendationsPanel from "@/components/RecommendationsPanel";
 import { useContentAnalysis } from "@/hooks/use-content-analysis";
 import { useToast } from "@/hooks/use-toast";
+import { AnalysisResult } from "@/lib/types";
 
 export default function Home() {
-  const { 
-    analyzeWebsite, 
-    isLoading, 
-    error, 
-    data, 
-    analyzedUrl 
-  } = useContentAnalysis();
-  
+  const [analyzedUrl, setAnalyzedUrl] = useState<string>("");
+  const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
+  const { analyzeWebsite, isAnalyzing } = useContentAnalysis();
   const { toast } = useToast();
 
-  const handleAnalyze = (url: string) => {
-    analyzeWebsite(url);
+  const handleAnalyze = async (url: string) => {
+    setAnalyzedUrl(url);
+    try {
+      const result = await analyzeWebsite.mutateAsync(url);
+      setAnalysisResult(result);
+    } catch (error: any) {
+      console.error("Analysis error:", error);
+      toast({
+        title: "Analysis Error",
+        description: error.message || "Failed to analyze website. Please try again.",
+        variant: "destructive",
+      });
+    }
   };
 
-  // Show toast on error
-  if (error) {
-    toast({
-      title: "Analysis Error",
-      description: error.message || "Failed to analyze website. Please try again.",
-      variant: "destructive",
-    });
-  }
-
   return (
-    <>
-      <SearchPanel onAnalyze={handleAnalyze} />
+    <div className="container py-8 space-y-8">
+      <div className="max-w-4xl mx-auto">
+        <h1 className="text-4xl font-bold text-center mb-2 bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
+          Competitive Content Analysis
+        </h1>
+        <p className="text-center text-muted-foreground mb-8">
+          Discover top competitor content and keywords to enhance your content strategy
+        </p>
+      </div>
+
+      <SearchPanel onAnalyze={handleAnalyze} isLoading={isAnalyzing} />
       
-      <LoadingIndicator isLoading={isLoading} />
+      {isAnalyzing && <LoadingIndicator isLoading={isAnalyzing} />}
       
-      {data && (
-        <>
+      {analysisResult && !isAnalyzing && (
+        <div className="space-y-8">
           <ResultsPanel 
             analyzedUrl={analyzedUrl}
-            results={data.competitorContent} 
+            results={analysisResult.competitorContent} 
           />
           
           <InsightsSummary 
-            insights={data.insights} 
+            insights={analysisResult.insights} 
           />
           
           <RecommendationsPanel 
-            recommendations={data.recommendations} 
+            recommendations={analysisResult.recommendations} 
           />
-        </>
+        </div>
       )}
-    </>
+    </div>
   );
 }
