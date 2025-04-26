@@ -122,12 +122,12 @@ export const findCompetitorDomains = async (domain: string, limit = 10): Promise
       
       // Marketing
       'market': ['hubspot.com', 'mailchimp.com', 'marketo.com', 'buffer.com', 'hootsuite.com', 'constantcontact.com', 'segment.com', 'moz.com', 'semrush.com', 'ahrefs.com'],
-      'seo': ['semrush.com', 'ahrefs.com', 'moz.com', 'majestic.com', 'serpstat.com', 'seranking.com', 'spyfu.com', 'rankmath.com', 'yoast.com', 'searchenginejournal.com'],
+      'seo': ['semrush.com', 'ahrefs.com', 'moz.com', 'searchenginejournal.com', 'serpstat.com', 'seranking.com', 'spyfu.com', 'rankmath.com', 'yoast.com', 'backlinko.com'],
       
-      // Boilers and Heating
-      'boiler': ['worcesterbosch.co.uk', 'viessman.com', 'vaillant.co.uk', 'baxi.co.uk', 'glow-worm.co.uk', 'idealboilers.com', 'alpha-innovation.co.uk', 'potterton.co.uk', 'navien.com', 'ariston.com'],
-      'heat': ['worcesterbosch.co.uk', 'viessman.com', 'vaillant.co.uk', 'baxi.co.uk', 'lennox.com', 'rheem.com', 'ruud.com', 'goodmanmfg.com', 'carrier.com', 'york.com'],
-      'hvac': ['carrier.com', 'trane.com', 'lennox.com', 'yorkhvacdealer.com', 'goodmanmfg.com', 'rheem.com', 'ruud.com', 'amana-hac.com', 'daikin.com', 'mitsubishicomfort.com'],
+      // Boilers and Heating (US only)
+      'boiler': ['navien.com', 'triangletube.com', 'weil-mclain.com', 'buderus.us', 'crown.com', 'lochinvar.com', 'slantfin.com', 'burnham.com', 'peerlessboilers.com', 'energykinetics.com'],
+      'heat': ['lennox.com', 'rheem.com', 'ruud.com', 'goodmanmfg.com', 'carrier.com', 'york.com', 'trane.com', 'amana-hac.com', 'bryantfurnace.com', 'tempstar.com'],
+      'hvac': ['carrier.com', 'trane.com', 'lennox.com', 'yorkhvacdealer.com', 'goodmanmfg.com', 'rheem.com', 'ruud.com', 'amana-hac.com', 'daikinac.com', 'mitsubishicomfort.com'],
       
       // Generic terms
       'online': ['amazon.com', 'ebay.com', 'etsy.com', 'walmart.com', 'shopify.com', 'bestbuy.com', 'target.com', 'aliexpress.com', 'overstock.com', 'wayfair.com'],
@@ -175,6 +175,7 @@ export const findCompetitorDomains = async (domain: string, limit = 10): Promise
         num: 5, // Reduced number to avoid limits
         engine: "google",
         gl: "us", // country = US
+        hl: "en", // language = English
       };
       
       // Try to get some additional competitors if possible
@@ -208,9 +209,23 @@ export const findCompetitorDomains = async (domain: string, limit = 10): Promise
       // Continue with predefined competitors
     }
     
-    // Get unique domains and filter out some common non-competitor sites
+    // Get unique domains and filter out non-US and social/development platforms
     const uniqueDomains = Array.from(new Set(allCompetitors))
-      .filter((d: string) => !d.includes("github.com") && !d.includes("medium.com"));
+      .filter((d: string) => 
+        // Exclude development and content platforms
+        !d.includes("github.com") && 
+        !d.includes("medium.com") &&
+        // Exclude non-US domains 
+        !d.includes(".co.uk") && 
+        !d.includes(".de") && 
+        !d.includes(".fr") && 
+        !d.includes(".es") && 
+        !d.includes(".ca") && 
+        !d.includes(".au") && 
+        !d.includes(".eu") &&
+        !d.includes(".io") &&
+        !d.includes(".org.uk")
+      );
     
     // Get the top domains by relevance (the first ones that appeared in results)
     const topDomains = uniqueDomains.slice(0, limit);
@@ -236,11 +251,13 @@ export const findCompetitorDomains = async (domain: string, limit = 10): Promise
 // Get search results from SerpAPI
 export const getSearchResults = async (domain: string, limit = 10): Promise<any[]> => {
   try {
-    // Create a search for organic results from this domain
+    // Create a search for organic results from this domain with US results only
     const params = {
       q: `site:${domain}`,
       num: limit,
       engine: "google",
+      gl: "us", // country = US
+      hl: "en", // language = English
     };
     
     const results = await serpapi.getJson(params);
@@ -302,7 +319,19 @@ export const processCompetitorContent = async (
     const similarWebsites = await getSimilarWebsites(domain);
     const similarDomains = similarWebsites
       .map(site => extractDomain(site))
-      .filter((d: unknown): d is string => !!d && typeof d === 'string' && d !== domain);
+      .filter((d: unknown): d is string => 
+        !!d && typeof d === 'string' && d !== domain &&
+        // Filter out non-US domains
+        !d.includes(".co.uk") && 
+        !d.includes(".de") && 
+        !d.includes(".fr") && 
+        !d.includes(".es") && 
+        !d.includes(".ca") && 
+        !d.includes(".au") && 
+        !d.includes(".eu") &&
+        !d.includes(".io") &&
+        !d.includes(".org.uk")
+      );
     
     // Combine all competitor domains, ensuring no duplicates
     const allCompetitorDomains = Array.from(new Set([...competitors, ...similarDomains])).slice(0, 15);
@@ -321,6 +350,7 @@ export const processCompetitorContent = async (
           num: 5,
           engine: "google",
           gl: "us", // country = US
+          hl: "en", // language = English
         };
         
         // Make a single API call
