@@ -669,7 +669,8 @@ export const scrapeDuckDuckGoResults = async (query: string, limit = 150): Promi
             link = linkEl.attr('href') || '';
           } else {
             // Sometimes the URL is in a data attribute
-            link = linkEl.data('nrh') || linkEl.attr('href') || '';
+            const dataNrh = $(linkEl).attr('data-nrh');
+            link = typeof dataNrh === 'string' ? dataNrh : (linkEl.attr('href') || '');
           }
           
           // For relative URLs
