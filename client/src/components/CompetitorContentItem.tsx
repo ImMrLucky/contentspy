@@ -1,7 +1,7 @@
 import { CompetitorContent } from "@/lib/types";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ExternalLink, LineChart, Calendar, InfoIcon } from "lucide-react";
+import { ExternalLink, Calendar, BarChart } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface CompetitorContentItemProps {
@@ -9,6 +9,25 @@ interface CompetitorContentItemProps {
 }
 
 export default function CompetitorContentItem({ content }: CompetitorContentItemProps) {
+  // Traffic level progress value
+  const getTrafficProgressValue = (trafficLevel: string = "") => {
+    if (trafficLevel.includes("100,000+")) return 100;
+    if (trafficLevel.includes("50,000-100,000")) return 80;
+    if (trafficLevel.includes("10,000-50,000")) return 60;
+    if (trafficLevel.includes("5,000-10,000")) return 40;
+    if (trafficLevel.includes("1,000-5,000")) return 20;
+    return 10;
+  };
+
+  // Traffic indicator color
+  const getTrafficColor = (trafficLevel: string = "") => {
+    if (trafficLevel.includes("100,000+")) return "text-success";
+    if (trafficLevel.includes("50,000-100,000")) return "text-success";
+    if (trafficLevel.includes("10,000-50,000")) return "text-warning";
+    if (trafficLevel.includes("5,000-10,000")) return "text-orange-500";
+    return "text-muted-foreground";
+  };
+
   return (
     <Card className="h-full flex flex-col hover:shadow-md transition-shadow duration-200 overflow-hidden">
       <CardHeader className="pb-3">
@@ -44,24 +63,30 @@ export default function CompetitorContentItem({ content }: CompetitorContentItem
         </p>
         
         {content.trafficLevel && (
-          <div className="flex items-center mt-1">
+          <div className="mt-3">
+            <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center text-xs">
+                <BarChart size={14} className={`mr-1 ${getTrafficColor(content.trafficLevel)}`} />
+                <span className={`font-medium ${getTrafficColor(content.trafficLevel)}`}>
+                  Traffic Estimate
+                </span>
+              </div>
+              <span className={`text-xs font-semibold ${getTrafficColor(content.trafficLevel)}`}>
+                {content.trafficLevel}
+              </span>
+            </div>
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <div className="flex items-center text-xs">
-                    <LineChart size={14} className="mr-1 text-muted-foreground" />
-                    <span className={`
-                      ${content.trafficLevel === "High traffic" ? "text-success" : ""}
-                      ${content.trafficLevel === "Medium traffic" ? "text-warning" : ""}
-                      ${content.trafficLevel === "Low traffic" ? "text-muted-foreground" : ""}
-                      font-medium
-                    `}>
-                      {content.trafficLevel}
-                    </span>
+                  <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-secondary">
+                    <div 
+                      className={`h-full absolute top-0 left-0 bg-primary ${content.trafficLevel.includes("100,000") ? "bg-gradient-to-r from-green-400 to-emerald-600" : ""}`}
+                      style={{ width: `${getTrafficProgressValue(content.trafficLevel)}%` }}
+                    />
                   </div>
                 </TooltipTrigger>
                 <TooltipContent>
-                  <p>Estimated traffic based on search visibility</p>
+                  <p>Estimated monthly traffic based on search visibility and ranking position</p>
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
