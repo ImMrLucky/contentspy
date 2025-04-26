@@ -1,16 +1,11 @@
 import axios from 'axios';
-import * as serpapi from 'serpapi';
 import * as cheerio from 'cheerio';
 import natural from 'natural';
 import { CompetitorContent } from '@shared/schema';
 import { URL } from 'url';
 
-// API Keys - Use environment variables
-const SERP_API_KEY = process.env.SERPAPI_KEY || 'ca0472a6aca733869577b72e6d4773dc30f32f25f09433771a87b8871bf52f97';
+// API Keys (Only using SimilarWeb now)
 const SIMILARWEB_API_KEY = process.env.SIMILARWEB_API_KEY || '05dbc8d629d24585947c0c0d4c521114';
-
-// Configure serpapi with API key
-serpapi.config.api_key = SERP_API_KEY;
 
 // Helper function for adding random delays between requests to avoid rate limits
 const randomDelay = async (min = 1000, max = 3000) => {
@@ -189,48 +184,10 @@ export const findCompetitorDomains = async (domain: string, limit = 10, keywords
     
     // Since competitorQueries is no longer defined, let's use a direct approach instead
     try {
-      // Use a more focused single query that's less likely to trigger protection
-      const carefulQuery = keywords 
-        ? `${domain} ${keywords} alternatives` 
-        : `${domain} alternatives`;
-      console.log(`Trying one careful query: "${carefulQuery}"`);
-      
-      const params = {
-        q: carefulQuery,
-        num: 5, // Reduced number to avoid limits
-        engine: "google",
-        gl: "us", // country = US
-        hl: "en", // language = English
-      };
-      
-      // Try to get some additional competitors if possible
-      try {
-        const results = await serpapi.getJson(params);
-        const organicResults = results.organic_results || [];
-        
-        if (organicResults.length > 0) {
-          const domains = organicResults
-            .map((result: any) => extractDomain(result.link))
-            .filter((d: unknown): d is string => !!d && typeof d === 'string' && d !== domain)
-            .filter((d: string) => !d.includes("wikipedia.org") && 
-                          !d.includes("youtube.com") &&
-                          !d.includes("linkedin.com") &&
-                          !d.includes("facebook.com") &&
-                          !d.includes("twitter.com") &&
-                          !d.includes("instagram.com") &&
-                          !d.includes("reddit.com") &&
-                          !d.includes("quora.com") &&
-                          !d.includes("google.com"));
-          
-          allCompetitors.push(...domains);
-          console.log(`Found ${domains.length} additional competitors from query`);
-        }
-      } catch (error: any) {
-        console.error(`Error with SerpAPI query - using predefined competitors only: ${error?.message || 'Unknown error'}`);
-        // Continue with just our predefined competitors
-      }
+      // Just use our predefined competitors - we'll get more from scraping later
+      console.log("Using predefined competitor list");
     } catch (error: any) {
-      console.error(`API query attempt failed, using predefined competitors only:`, error?.message || 'Unknown error');
+      console.error(`Error occurred: ${error?.message || 'Unknown error'}`);
       // Continue with predefined competitors
     }
     
@@ -573,59 +530,287 @@ export const scrapeBingSearchResults = async (query: string, limit = 200): Promi
   }
 };
 
-// Get search results - first try direct scraping, fall back to SerpAPI
+// Scrape search results from Yahoo
+export const scrapeYahooSearchResults = async (query: string, limit = 150): Promise<any[]> => {
+  try {
+    console.log(`Scraping Yahoo search results for: ${query}`);
+    const allResults: any[] = [];
+    
+    // Yahoo typically shows 10 results per page, so we need multiple requests
+    for (let page = 1; page <= 5; page++) {
+      if (allResults.length >= limit) break;
+      
+      await randomDelay(2000, 4000); // Use longer delays for Yahoo
+      
+      const formattedQuery = encodeURIComponent(query);
+      const offset = (page - 1) * 10;
+      const url = `https://search.yahoo.com/search?p=${formattedQuery}&b=${offset + 1}`;
+      
+      try {
+        const response = await axios.get(url, {
+          headers: {
+            'User-Agent': getRandomUserAgent(),
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Cache-Control': 'no-cache'
+          },
+          timeout: 20000
+        });
+        
+        const $ = cheerio.load(response.data);
+        let resultsOnPage = 0;
+        
+        // Yahoo search result selectors
+        $('.algo, .algo-sr').each((i, el) => {
+          if (allResults.length >= limit) return false;
+          
+          const titleEl = $(el).find('h3, .title a');
+          const linkEl = $(el).find('a.d-ib, .title a');
+          const snippetEl = $(el).find('.compText, .algo-sr p');
+          
+          if (titleEl.length && linkEl.length) {
+            const title = titleEl.text().trim();
+            let link = linkEl.attr('href') || '';
+            
+            // Yahoo often uses redirects
+            if (link.includes('/RU=')) {
+              try {
+                // Extract the real URL from Yahoo's redirect
+                const match = link.match(/\/RU=([^/]+)\/RK=/);
+                if (match && match[1]) {
+                  link = decodeURIComponent(match[1]);
+                }
+              } catch (e) {
+                // Use original link
+              }
+            }
+            
+            const snippet = snippetEl.text().trim();
+            
+            // Skip if link doesn't start with http or if it's empty
+            if (!link || !link.startsWith('http')) return;
+            
+            // Skip if title is empty
+            if (!title) return;
+            
+            // Avoid duplicate results
+            if (allResults.some(result => result.link === link)) return;
+            
+            allResults.push({
+              title,
+              link,
+              snippet,
+              position: allResults.length + 1
+            });
+            
+            resultsOnPage++;
+          }
+        });
+        
+        console.log(`Found ${resultsOnPage} Yahoo results on page ${page}`);
+        
+        // If no results on this page, stop pagination
+        if (resultsOnPage === 0) break;
+        
+      } catch (error) {
+        console.error(`Error scraping Yahoo page ${page}:`, error);
+        // Continue to next page
+      }
+      
+      // Add delay between page requests
+      await randomDelay(1500, 3000);
+    }
+    
+    console.log(`Scraped ${allResults.length} total Yahoo results for "${query}"`);
+    return allResults;
+  } catch (error) {
+    console.error(`Error in Yahoo scraping:`, error);
+    return [];
+  }
+};
+
+// Scrape search results from DuckDuckGo
+export const scrapeDuckDuckGoResults = async (query: string, limit = 150): Promise<any[]> => {
+  try {
+    console.log(`Scraping DuckDuckGo search results for: ${query}`);
+    const allResults: any[] = [];
+    
+    // DuckDuckGo loads results via JS, so we'll use their HTML endpoint
+    const formattedQuery = encodeURIComponent(query);
+    const url = `https://duckduckgo.com/html/?q=${formattedQuery}`;
+    
+    try {
+      const response = await axios.get(url, {
+        headers: {
+          'User-Agent': getRandomUserAgent(),
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.5',
+          'Cache-Control': 'no-cache'
+        },
+        timeout: 20000
+      });
+      
+      const $ = cheerio.load(response.data);
+      
+      // DuckDuckGo search result selectors
+      $('.result, .web-result').each((i, el) => {
+        if (allResults.length >= limit) return false;
+        
+        const titleEl = $(el).find('.result__title, .result__a');
+        const linkEl = $(el).find('.result__url, .result__a');
+        const snippetEl = $(el).find('.result__snippet');
+        
+        if (titleEl.length && linkEl.length) {
+          const title = titleEl.text().trim();
+          let link = '';
+          
+          // Try to get the direct URL
+          if (linkEl.attr('href')) {
+            link = linkEl.attr('href') || '';
+          } else {
+            // Sometimes the URL is in a data attribute
+            link = linkEl.data('nrh') || linkEl.attr('href') || '';
+          }
+          
+          // For relative URLs
+          if (link.startsWith('/')) {
+            link = `https://duckduckgo.com${link}`;
+          }
+          
+          const snippet = snippetEl.text().trim();
+          
+          // Skip if link is empty
+          if (!link) return;
+          
+          // Try to extract proper URL from DuckDuckGo redirects
+          if (link.includes('duckduckgo.com/l/?')) {
+            try {
+              const urlObj = new URL(link);
+              const actualUrl = urlObj.searchParams.get('uddg');
+              if (actualUrl) link = actualUrl;
+            } catch (e) {
+              // Use original link
+            }
+          }
+          
+          // Skip if title is empty or link doesn't start with http
+          if (!title || !link.startsWith('http')) return;
+          
+          // Avoid duplicate results
+          if (allResults.some(result => result.link === link)) return;
+          
+          allResults.push({
+            title,
+            link,
+            snippet,
+            position: allResults.length + 1
+          });
+        }
+      });
+      
+      console.log(`Found ${allResults.length} DuckDuckGo results`);
+      
+    } catch (error) {
+      console.error(`Error scraping DuckDuckGo:`, error);
+    }
+    
+    return allResults;
+  } catch (error) {
+    console.error(`Error in DuckDuckGo scraping:`, error);
+    return [];
+  }
+};
+
+// Get search results using multiple engines without SerpAPI
 export const getSearchResults = async (domain: string, limit = 10): Promise<any[]> => {
   try {
     const query = `site:${domain}`;
+    const allResults: any[] = [];
     
-    // First try scraping Google directly
-    let googleResults = await scrapeGoogleSearchResults(query, limit);
+    // Try all search engines in sequence, combining results
     
-    // If that fails or returns no results, try Bing
-    if (googleResults.length === 0) {
-      console.log(`No Google results found, trying Bing for ${domain}`);
-      googleResults = await scrapeBingSearchResults(query, limit);
-    }
-    
-    // If both scraping methods fail, fall back to SerpAPI
-    if (googleResults.length === 0) {
-      console.log(`Direct scraping failed, falling back to SerpAPI for ${domain}`);
-      const params = {
-        q: query,
-        num: limit,
-        engine: "google",
-        gl: "us", // country = US
-        hl: "en", // language = English
-      };
-      
-      const results = await serpapi.getJson(params);
-      
-      if (results.organic_results) {
-        return results.organic_results.slice(0, limit);
-      }
-    }
-    
-    return googleResults.slice(0, limit);
-  } catch (error) {
-    console.error(`Error getting search results for ${domain}:`, error);
-    // Try SerpAPI as last resort
+    // 1. Google
     try {
-      console.log(`Scraping failed, using SerpAPI as fallback for ${domain}`);
-      const params = {
-        q: `site:${domain}`,
-        num: limit,
-        engine: "google",
-        gl: "us",
-        hl: "en",
-      };
-      
-      const results = await serpapi.getJson(params);
-      if (results.organic_results) {
-        return results.organic_results.slice(0, limit);
+      const googleResults = await scrapeGoogleSearchResults(query, Math.min(100, limit));
+      if (googleResults.length > 0) {
+        console.log(`Found ${googleResults.length} Google results for ${domain}`);
+        allResults.push(...googleResults);
       }
-    } catch (fallbackError) {
-      console.error(`Even SerpAPI fallback failed:`, fallbackError);
+    } catch (googleError) {
+      console.error(`Google scraping failed for ${domain}:`, googleError);
     }
+    
+    // If we have enough results, return early
+    if (allResults.length >= limit) {
+      return allResults.slice(0, limit);
+    }
+    
+    // 2. Bing
+    try {
+      const bingResults = await scrapeBingSearchResults(query, Math.min(80, limit));
+      if (bingResults.length > 0) {
+        console.log(`Found ${bingResults.length} Bing results for ${domain}`);
+        
+        // Filter out duplicates before adding
+        const newResults = bingResults.filter(result => 
+          !allResults.some(existingResult => existingResult.link === result.link)
+        );
+        
+        allResults.push(...newResults);
+      }
+    } catch (bingError) {
+      console.error(`Bing scraping failed for ${domain}:`, bingError);
+    }
+    
+    // If we have enough results, return early
+    if (allResults.length >= limit) {
+      return allResults.slice(0, limit);
+    }
+    
+    // 3. Yahoo
+    try {
+      const yahooResults = await scrapeYahooSearchResults(query, Math.min(50, limit));
+      if (yahooResults.length > 0) {
+        console.log(`Found ${yahooResults.length} Yahoo results for ${domain}`);
+        
+        // Filter out duplicates before adding
+        const newResults = yahooResults.filter(result => 
+          !allResults.some(existingResult => existingResult.link === result.link)
+        );
+        
+        allResults.push(...newResults);
+      }
+    } catch (yahooError) {
+      console.error(`Yahoo scraping failed for ${domain}:`, yahooError);
+    }
+    
+    // If we have enough results, return early
+    if (allResults.length >= limit) {
+      return allResults.slice(0, limit);
+    }
+    
+    // 4. DuckDuckGo
+    try {
+      const ddgResults = await scrapeDuckDuckGoResults(query, Math.min(40, limit));
+      if (ddgResults.length > 0) {
+        console.log(`Found ${ddgResults.length} DuckDuckGo results for ${domain}`);
+        
+        // Filter out duplicates before adding
+        const newResults = ddgResults.filter(result => 
+          !allResults.some(existingResult => existingResult.link === result.link)
+        );
+        
+        allResults.push(...newResults);
+      }
+    } catch (ddgError) {
+      console.error(`DuckDuckGo scraping failed for ${domain}:`, ddgError);
+    }
+    
+    // Return what we have so far (even if less than requested)
+    return allResults.slice(0, limit);
+    
+  } catch (error) {
+    console.error(`Error in multi-engine search for ${domain}:`, error);
     return [];
   }
 };
