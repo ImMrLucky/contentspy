@@ -11,20 +11,24 @@ interface CompetitorContentItemProps {
 export default function CompetitorContentItem({ content }: CompetitorContentItemProps) {
   // Traffic level progress value
   const getTrafficProgressValue = (trafficLevel: string = "") => {
-    if (trafficLevel.includes("100,000+")) return 100;
-    if (trafficLevel.includes("50,000-100,000")) return 80;
-    if (trafficLevel.includes("10,000-50,000")) return 60;
-    if (trafficLevel.includes("5,000-10,000")) return 40;
-    if (trafficLevel.includes("1,000-5,000")) return 20;
-    return 10;
+    if (trafficLevel.includes("20,000+")) return 100;
+    if (trafficLevel.includes("10,000-20,000")) return 85;
+    if (trafficLevel.includes("5,000-10,000")) return 70;
+    if (trafficLevel.includes("2,000-5,000")) return 55;
+    if (trafficLevel.includes("1,000-2,000")) return 40;
+    if (trafficLevel.includes("500-1,000")) return 25;
+    if (trafficLevel.includes("Under 500")) return 10;
+    return 5; // For unknown traffic
   };
 
   // Traffic indicator color
   const getTrafficColor = (trafficLevel: string = "") => {
-    if (trafficLevel.includes("100,000+")) return "text-success";
-    if (trafficLevel.includes("50,000-100,000")) return "text-success";
-    if (trafficLevel.includes("10,000-50,000")) return "text-warning";
-    if (trafficLevel.includes("5,000-10,000")) return "text-orange-500";
+    if (trafficLevel.includes("20,000+")) return "text-success";
+    if (trafficLevel.includes("10,000-20,000")) return "text-success";
+    if (trafficLevel.includes("5,000-10,000")) return "text-warning";
+    if (trafficLevel.includes("2,000-5,000")) return "text-warning";
+    if (trafficLevel.includes("1,000-2,000")) return "text-orange-500";
+    if (trafficLevel.includes("500-1,000")) return "text-orange-500";
     return "text-muted-foreground";
   };
 
@@ -80,7 +84,7 @@ export default function CompetitorContentItem({ content }: CompetitorContentItem
                 <TooltipTrigger asChild>
                   <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-secondary">
                     <div 
-                      className={`h-full absolute top-0 left-0 bg-primary ${content.trafficLevel.includes("100,000") ? "bg-gradient-to-r from-green-400 to-emerald-600" : ""}`}
+                      className={`h-full absolute top-0 left-0 bg-primary ${content.trafficLevel.includes("20,000+") || content.trafficLevel.includes("10,000-20,000") ? "bg-gradient-to-r from-green-400 to-emerald-600" : ""}`}
                       style={{ width: `${getTrafficProgressValue(content.trafficLevel)}%` }}
                     />
                   </div>

@@ -185,7 +185,7 @@ export const findCompetitorDomains = async (domain: string, limit = 10): Promise
         if (organicResults.length > 0) {
           const domains = organicResults
             .map((result: any) => extractDomain(result.link))
-            .filter((d): d is string => !!d && d !== domain)
+            .filter((d: unknown): d is string => !!d && typeof d === 'string' && d !== domain)
             .filter((d: string) => !d.includes("wikipedia.org") && 
                           !d.includes("youtube.com") &&
                           !d.includes("linkedin.com") &&
@@ -302,7 +302,7 @@ export const processCompetitorContent = async (
     const similarWebsites = await getSimilarWebsites(domain);
     const similarDomains = similarWebsites
       .map(site => extractDomain(site))
-      .filter((d): d is string => !!d && d !== domain);
+      .filter((d: unknown): d is string => !!d && typeof d === 'string' && d !== domain);
     
     // Combine all competitor domains, ensuring no duplicates
     const allCompetitorDomains = Array.from(new Set([...competitors, ...similarDomains])).slice(0, 15);
