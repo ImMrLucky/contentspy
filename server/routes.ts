@@ -17,8 +17,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/analyze", async (req: Request, res: Response) => {
     console.log("Received analyze request");
     try {
-      const { url } = req.body;
+      const { url, keywords } = req.body;
       console.log(`Analyzing URL: ${url}`);
+      if (keywords) {
+        console.log(`Using keywords: ${keywords}`);
+      }
       
       // Validate URL format
       if (!url || typeof url !== 'string') {
@@ -44,7 +47,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Process competitor content using real APIs
       console.log(`Starting competitor content analysis for ${domain}`);
-      const competitorResults = await processCompetitorContent(domain, analysis.id);
+      const competitorResults = await processCompetitorContent(domain, analysis.id, keywords);
       
       // Store competitor content and keywords in database
       const storedResults = await Promise.all(

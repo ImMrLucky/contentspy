@@ -307,7 +307,8 @@ export const extractIndustryFromDomain = (domain: string): string => {
 // Process competitor content from search results and scraping
 export const processCompetitorContent = async (
   domain: string, 
-  analysisId: number
+  analysisId: number,
+  keywords?: string
 ): Promise<Partial<CompetitorContent & {keywords: string[]}>[]> => {
   try {
     console.log(`Finding competitor websites for ${domain}...`);

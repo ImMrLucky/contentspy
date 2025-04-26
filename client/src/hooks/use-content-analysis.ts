@@ -3,19 +3,24 @@ import { apiRequest } from "@/lib/queryClient";
 import { AnalysisResult } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
 
+interface AnalyzeRequest {
+  url: string;
+  keywords?: string;
+}
+
 export function useContentAnalysis() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
   // Create mutation for analyzing a website
   const analyzeWebsite = useMutation({
-    mutationFn: async (url: string): Promise<AnalysisResult> => {
+    mutationFn: async (request: AnalyzeRequest): Promise<AnalysisResult> => {
       const response = await fetch("/api/analyze", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify(request),
       });
 
       return response.json();
@@ -44,4 +49,4 @@ export function useContentAnalysis() {
     analyzeWebsite,
     isAnalyzing: analyzeWebsite.isPending,
   };
-}console.log('Checking for errors with processCompetitorContent')
+}
