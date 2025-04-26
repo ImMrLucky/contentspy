@@ -167,6 +167,18 @@ export default function TrafficHeatmap({ competitorContent }: TrafficHeatmapProp
             step={1}
             className="mb-4"
           />
+          
+          {/* Source filter toggle group */}
+          <div className="mt-3 mb-2">
+            <h4 className="text-sm font-medium mb-2">Search Engine Source</h4>
+            <ToggleGroup type="single" value={sourceFilter} onValueChange={value => value && setSourceFilter(value)} className="justify-start">
+              <ToggleGroupItem value="all" aria-label="All sources" className="text-xs">All</ToggleGroupItem>
+              <ToggleGroupItem value="google" aria-label="Google results" className="text-xs bg-blue-50 data-[state=on]:bg-blue-100 data-[state=on]:text-blue-700">Google</ToggleGroupItem>
+              <ToggleGroupItem value="bing" aria-label="Bing results" className="text-xs bg-teal-50 data-[state=on]:bg-teal-100 data-[state=on]:text-teal-700">Bing</ToggleGroupItem>
+              <ToggleGroupItem value="yahoo" aria-label="Yahoo results" className="text-xs bg-purple-50 data-[state=on]:bg-purple-100 data-[state=on]:text-purple-700">Yahoo</ToggleGroupItem>
+              <ToggleGroupItem value="duckduckgo" aria-label="DuckDuckGo results" className="text-xs bg-orange-50 data-[state=on]:bg-orange-100 data-[state=on]:text-orange-700">DuckDuckGo</ToggleGroupItem>
+            </ToggleGroup>
+          </div>
         </div>
       </CardHeader>
       <CardContent>
@@ -186,8 +198,18 @@ export default function TrafficHeatmap({ competitorContent }: TrafficHeatmapProp
                               onClick={() => setSelectedCell(cell)}
                             >
                               {cell.trafficValue}
+                              {/* Source indicators */}
                               {cell.source === 'google' && (
                                 <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center">G</span>
+                              )}
+                              {cell.source === 'bing' && (
+                                <span className="absolute -top-1 -right-1 bg-teal-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center">B</span>
+                              )}
+                              {cell.source === 'yahoo' && (
+                                <span className="absolute -top-1 -right-1 bg-purple-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center">Y</span>
+                              )}
+                              {cell.source === 'duckduckgo' && (
+                                <span className="absolute -top-1 -right-1 bg-orange-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center">D</span>
                               )}
                             </div>
                           </TooltipTrigger>
@@ -256,24 +278,48 @@ export default function TrafficHeatmap({ competitorContent }: TrafficHeatmapProp
           </div>
         )}
         
-        <div className="mt-6 flex justify-between items-center">
-          <div className="flex items-center space-x-2">
-            <div className="flex items-center">
-              <div className="w-3 h-3 bg-green-200 rounded mr-1"></div>
-              <span className="text-xs">Low</span>
+        <div className="mt-6 flex flex-col space-y-4">
+          {/* Traffic color legend */}
+          <div className="flex justify-between items-center">
+            <div className="flex items-center space-x-2">
+              <div className="flex items-center">
+                <div className="w-3 h-3 bg-green-200 rounded mr-1"></div>
+                <span className="text-xs">Low</span>
+              </div>
+              <div className="flex items-center">
+                <div className="w-3 h-3 bg-yellow-300 rounded mr-1"></div>
+                <span className="text-xs">Medium</span>
+              </div>
+              <div className="flex items-center">
+                <div className="w-3 h-3 bg-red-500 rounded mr-1"></div>
+                <span className="text-xs">High</span>
+              </div>
             </div>
-            <div className="flex items-center">
-              <div className="w-3 h-3 bg-yellow-300 rounded mr-1"></div>
-              <span className="text-xs">Medium</span>
-            </div>
-            <div className="flex items-center">
-              <div className="w-3 h-3 bg-red-500 rounded mr-1"></div>
-              <span className="text-xs">High</span>
+            
+            <div className="text-xs text-muted-foreground">
+              Showing {filteredData.length} of {heatmapData.length} content pieces
             </div>
           </div>
           
-          <div className="text-xs text-muted-foreground">
-            Showing {filteredData.length} of {heatmapData.length} content pieces
+          {/* Search engine source legend */}
+          <div className="flex flex-wrap items-center gap-3 pt-2 border-t">
+            <span className="text-xs font-medium">Sources:</span>
+            <div className="flex items-center">
+              <span className="bg-blue-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center mr-1">G</span>
+              <span className="text-xs">Google</span>
+            </div>
+            <div className="flex items-center">
+              <span className="bg-teal-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center mr-1">B</span>
+              <span className="text-xs">Bing</span>
+            </div>
+            <div className="flex items-center">
+              <span className="bg-purple-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center mr-1">Y</span>
+              <span className="text-xs">Yahoo</span>
+            </div>
+            <div className="flex items-center">
+              <span className="bg-orange-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center mr-1">D</span>
+              <span className="text-xs">DuckDuckGo</span>
+            </div>
           </div>
         </div>
       </CardContent>
