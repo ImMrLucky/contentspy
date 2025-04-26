@@ -91,9 +91,12 @@ export const getSimilarWebsites = async (domain: string): Promise<string[]> => {
 };
 
 // Find top competitor domains (not just search results)
-export const findCompetitorDomains = async (domain: string, limit = 10): Promise<string[]> => {
+export const findCompetitorDomains = async (domain: string, limit = 10, keywords?: string): Promise<string[]> => {
   try {
     console.log(`Finding direct competitors for domain: ${domain}`);
+    if (keywords) {
+      console.log(`Using additional keywords: ${keywords}`);
+    }
     
     // Extract domain name without TLD
     const domainName = domain.replace(/^www\./i, '').split('.')[0].toLowerCase();
@@ -167,7 +170,9 @@ export const findCompetitorDomains = async (domain: string, limit = 10): Promise
     // Since competitorQueries is no longer defined, let's use a direct approach instead
     try {
       // Use a more focused single query that's less likely to trigger protection
-      const carefulQuery = `${domain} alternatives`;
+      const carefulQuery = keywords 
+        ? `${domain} ${keywords} alternatives` 
+        : `${domain} alternatives`;
       console.log(`Trying one careful query: "${carefulQuery}"`);
       
       const params = {
@@ -314,7 +319,7 @@ export const processCompetitorContent = async (
     console.log(`Finding competitor websites for ${domain}...`);
     
     // Get actual competitors (not just search results)
-    const competitors = await findCompetitorDomains(domain, 15);
+    const competitors = await findCompetitorDomains(domain, 15, keywords);
     
     // Add similar websites from SimilarWeb if available
     const similarWebsites = await getSimilarWebsites(domain);
@@ -347,7 +352,9 @@ export const processCompetitorContent = async (
         
         // Just use one query instead of two to reduce risk of hitting API limits
         const params = {
-          q: `site:${competitorDomain}`,
+          q: keywords 
+            ? `site:${competitorDomain} ${keywords}` 
+            : `site:${competitorDomain}`,
           num: 5,
           engine: "google",
           gl: "us", // country = US
