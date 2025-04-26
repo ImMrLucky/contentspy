@@ -894,29 +894,35 @@ export const processCompetitorContent = async (
     
     console.log(`Searching for relevant content with query: "${directContentQuery}"`);
     
-    // Array to store all content results from various search methods
-    let allContentResults: any[] = [];
+    // Arrays to store results from each search engine separately
+    let googleResults: any[] = [];
+    let bingResults: any[] = [];
+    let yahooResults: any[] = [];
+    let ddgResults: any[] = [];
     
-    // Try each query with Google first
+    // Try each query with Google first - we'll save these separately to prioritize them
     for (const query of searchQueries) {
-      if (allContentResults.length >= 150) break; // Stop if we already have enough results
+      if (googleResults.length >= 75) break; // Limit to 75 results from Google
       
       try {
         console.log(`Scraping Google for query: "${query}"`);
-        const googleResults = await scrapeGoogleSearchResults(query, 100); // Reduced limit per query
+        const results = await scrapeGoogleSearchResults(query, 75); // Increased to 75 results
         
-        if (googleResults.length > 0) {
-          console.log(`Found ${googleResults.length} content results from Google for query "${query}"`);
+        if (results.length > 0) {
+          console.log(`Found ${results.length} content results from Google for query "${query}"`);
           
           // Filter out duplicates before adding
-          const newResults = googleResults.filter(result => 
-            !allContentResults.some(existingResult => 
+          const newResults = results.filter(result => 
+            !googleResults.some(existingResult => 
               existingResult.link === result.link
             )
           );
           
+          // Mark these as Google results (for prioritization later)
+          newResults.forEach(result => result.source = 'google');
+          
           console.log(`Adding ${newResults.length} unique Google results`);
-          allContentResults = [...allContentResults, ...newResults];
+          googleResults = [...googleResults, ...newResults];
           
           // Add a short delay between queries
           await randomDelay(1000, 2000);
@@ -926,118 +932,115 @@ export const processCompetitorContent = async (
       }
     }
     
-    // If we don't have enough results, try Bing queries
-    if (allContentResults.length < 80) {
-      for (const query of searchQueries) {
-        if (allContentResults.length >= 150) break; // Stop if we have enough results
-        
-        try {
-          console.log(`Scraping Bing for query: "${query}"`);
-          const bingResults = await scrapeBingSearchResults(query, 80); // Reduced limit per query
-          
-          if (bingResults.length > 0) {
-            console.log(`Found ${bingResults.length} content results from Bing for query "${query}"`);
-            
-            // Filter out duplicates before adding
-            const newResults = bingResults.filter(result => 
-              !allContentResults.some(existingResult => 
-                existingResult.link === result.link
-              )
-            );
-            
-            console.log(`Adding ${newResults.length} unique Bing results`);
-            allContentResults = [...allContentResults, ...newResults];
-            
-            // Add a short delay between queries
-            await randomDelay(1000, 2000);
-          }
-        } catch (error) {
-          console.error(`Error scraping Bing for query "${query}":`, error);
-        }
-      }
-    }
-    
-    // Use Yahoo and DuckDuckGo as a fallback if Google/Bing didn't yield enough results
-    if (allContentResults.length < 40) {
+    // Now try Bing search engine
+    for (const query of searchQueries) {
+      if (bingResults.length >= 75) break; // Limit to 75 results from Bing
+      
       try {
-        console.log("Direct Google/Bing scraping yielded insufficient results, trying Yahoo");
+        console.log(`Scraping Bing for query: "${query}"`);
+        const results = await scrapeBingSearchResults(query, 75); // Increased to 75 results
         
-        // Try multiple queries with Yahoo
-        for (let i = 0; i < Math.min(searchQueries.length, 2); i++) {
-          const query = searchQueries[i];
-          console.log(`Using Yahoo for query: "${query}"`);
+        if (results.length > 0) {
+          console.log(`Found ${results.length} content results from Bing for query "${query}"`);
           
-          try {
-            const yahooResults = await scrapeYahooSearchResults(query, 50);
-            
-            if (yahooResults.length > 0) {
-              const newResults = yahooResults.filter(yahooResult => 
-                !allContentResults.some(existingResult => 
-                  existingResult.link === yahooResult.link
-                )
-              );
-              
-              console.log(`Adding ${newResults.length} unique results from Yahoo query ${i+1}`);
-              allContentResults = [...allContentResults, ...newResults];
-              
-              // If we've got enough results, no need to keep trying
-              if (allContentResults.length >= 60) {
-                break;
-              }
-              
-              // Brief pause between Yahoo queries
-              await randomDelay(1500, 3000);
-            }
-          } catch (error) {
-            console.error(`Error with Yahoo query ${i+1}:`, error);
-            continue; // Try the next query
-          }
-        }
-        
-        // If still not enough, try DuckDuckGo
-        if (allContentResults.length < 30) {
-          console.log("Yahoo results insufficient, trying DuckDuckGo");
+          // Filter out duplicates before adding (both within Bing and against Google)
+          const newResults = results.filter(result => 
+            !bingResults.some(existingResult => existingResult.link === result.link) &&
+            !googleResults.some(existingResult => existingResult.link === result.link)
+          );
           
-          for (let i = 0; i < Math.min(searchQueries.length, 2); i++) {
-            const query = searchQueries[i];
-            console.log(`Using DuckDuckGo for query: "${query}"`);
-            
-            try {
-              const ddgResults = await scrapeDuckDuckGoResults(query, 40);
-              
-              if (ddgResults.length > 0) {
-                const newResults = ddgResults.filter(ddgResult => 
-                  !allContentResults.some(existingResult => 
-                    existingResult.link === ddgResult.link
-                  )
-                );
-                
-                console.log(`Adding ${newResults.length} unique results from DuckDuckGo query ${i+1}`);
-                allContentResults = [...allContentResults, ...newResults];
-                
-                // If we've got enough results, stop
-                if (allContentResults.length >= 60) {
-                  break;
-                }
-                
-                // Brief pause between queries
-                await randomDelay(1500, 3000);
-              }
-            } catch (error) {
-              console.error(`Error with DuckDuckGo query ${i+1}:`, error);
-              continue;
-            }
-          }
+          // Mark these as Bing results
+          newResults.forEach(result => result.source = 'bing');
+          
+          console.log(`Adding ${newResults.length} unique Bing results`);
+          bingResults = [...bingResults, ...newResults];
+          
+          // Add a short delay between queries
+          await randomDelay(1200, 2500);
         }
       } catch (error) {
-        console.error("Error with all fallback search attempts:", error);
+        console.error(`Error scraping Bing for query "${query}":`, error);
       }
     }
     
-    console.log(`Found total of ${allContentResults.length} content results across all sources`);
+    // Now try Yahoo search engine
+    for (const query of searchQueries) {
+      if (yahooResults.length >= 75) break; // Limit to 75 results from Yahoo
+      
+      try {
+        console.log(`Scraping Yahoo for query: "${query}"`);
+        const results = await scrapeYahooSearchResults(query, 75); // Increased to 75 results
+        
+        if (results.length > 0) {
+          console.log(`Found ${results.length} content results from Yahoo for query "${query}"`);
+          
+          // Filter out duplicates before adding (comparing to all previous results)
+          const newResults = results.filter(result => 
+            !yahooResults.some(existingResult => existingResult.link === result.link) &&
+            !googleResults.some(existingResult => existingResult.link === result.link) &&
+            !bingResults.some(existingResult => existingResult.link === result.link)
+          );
+          
+          // Mark these as Yahoo results
+          newResults.forEach(result => result.source = 'yahoo');
+          
+          console.log(`Adding ${newResults.length} unique Yahoo results`);
+          yahooResults = [...yahooResults, ...newResults];
+          
+          // Add a short delay between queries
+          await randomDelay(1500, 3000);
+        }
+      } catch (error) {
+        console.error(`Error scraping Yahoo for query "${query}":`, error);
+      }
+    }
+    
+    // Finally try DuckDuckGo search engine
+    for (const query of searchQueries) {
+      if (ddgResults.length >= 75) break; // Limit to 75 results from DuckDuckGo
+      
+      try {
+        console.log(`Scraping DuckDuckGo for query: "${query}"`);
+        const results = await scrapeDuckDuckGoResults(query, 75); // Increased to 75 results
+        
+        if (results.length > 0) {
+          console.log(`Found ${results.length} content results from DuckDuckGo for query "${query}"`);
+          
+          // Filter out duplicates before adding (comparing to all previous results)
+          const newResults = results.filter(result => 
+            !ddgResults.some(existingResult => existingResult.link === result.link) &&
+            !googleResults.some(existingResult => existingResult.link === result.link) &&
+            !bingResults.some(existingResult => existingResult.link === result.link) &&
+            !yahooResults.some(existingResult => existingResult.link === result.link)
+          );
+          
+          // Mark these as DuckDuckGo results
+          newResults.forEach(result => result.source = 'duckduckgo');
+          
+          console.log(`Adding ${newResults.length} unique DuckDuckGo results`);
+          ddgResults = [...ddgResults, ...newResults];
+          
+          // Add a short delay between queries
+          await randomDelay(1800, 3500);
+        }
+      } catch (error) {
+        console.error(`Error scraping DuckDuckGo for query "${query}":`, error);
+      }
+    }
+    
+    // Combine all results from different search engines - prioritize Google results first
+    // Merge in order: Google (highest priority) -> Bing -> Yahoo -> DuckDuckGo
+    const allResults = [
+      ...googleResults,
+      ...bingResults,
+      ...yahooResults,
+      ...ddgResults
+    ];
+    
+    console.log(`Found total of ${allResults.length} content results across all search engines`);
     
     // Enhanced filtering to ONLY include relevant blog posts, articles, and content pages
-    const filteredResults = allContentResults.filter(result => {
+    const filteredResults = allResults.filter((result: any) => {
       try {
         const url = result.link.toLowerCase();
         const title = (result.title || '').toLowerCase();
@@ -1309,7 +1312,15 @@ export const processCompetitorContent = async (
           return visitRanges[0]; // Under 500
         };
         
-        // Get traffic level using the new enhanced estimation function with content factors
+        // Get traffic level using the enhanced estimation function with content factors
+        // Boost scores for Google results (source priority)
+        let sourceBoost = 0;
+        if (result.source === 'google') {
+          sourceBoost = 2; // Prioritize Google results
+        } else if (result.source === 'bing') {
+          sourceBoost = 1; // Slight boost for Bing
+        }
+        
         const trafficLevel = estimateTrafficLevel(
           competitorDomain, 
           result.position || 10, 
@@ -1317,7 +1328,21 @@ export const processCompetitorContent = async (
           title || result.title || ''
         );
         
-        // Create competitor content object
+        // Calculate a numeric traffic score for better sorting later
+        // This converts the traffic string level to a number for sorting
+        let trafficScore = 0;
+        if (trafficLevel.includes("20,000+")) trafficScore = 7;
+        else if (trafficLevel.includes("10,000-20,000")) trafficScore = 6;
+        else if (trafficLevel.includes("5,000-10,000")) trafficScore = 5;
+        else if (trafficLevel.includes("2,000-5,000")) trafficScore = 4;
+        else if (trafficLevel.includes("1,000-2,000")) trafficScore = 3;
+        else if (trafficLevel.includes("500-1,000")) trafficScore = 2;
+        else trafficScore = 1;
+        
+        // Apply source boost to traffic score
+        trafficScore += sourceBoost;
+        
+        // Create competitor content object with traffic score for sorting
         return {
           analysisId,
           title: title || result.title,
@@ -1326,6 +1351,8 @@ export const processCompetitorContent = async (
           publishDate: result.date || "Recent",
           description: result.snippet || (text ? text.substring(0, 150) + "..." : ""),
           trafficLevel,
+          trafficScore, // Add numeric score for sorting
+          source: result.source || 'unknown', // Track the source search engine
           keywords
         };
       } catch (error) {
@@ -1334,25 +1361,28 @@ export const processCompetitorContent = async (
       }
     });
     
-    // Filter out null results and sort by estimated traffic (highest first)
+    // Filter out null results and sort by our new trafficScore which prioritizes Google & high traffic results
     const competitorContent = (await Promise.all(competitorContentPromises))
-      .filter(content => content !== null) as Partial<CompetitorContent & {keywords: string[]}>[];
+      .filter(content => content !== null) as Partial<CompetitorContent & {
+        keywords: string[],
+        trafficScore: number,
+        source: string
+      }>[];
     
-    // Sort by traffic level (high to low)
+    // Sort by traffic score and source priority (Google first, then by traffic)
     competitorContent.sort((a, b) => {
-      const getTrafficValue = (trafficLevel?: string) => {
-        if (!trafficLevel) return 0;
-        if (trafficLevel.includes("20,000+")) return 7;
-        if (trafficLevel.includes("10,000-20,000")) return 6;
-        if (trafficLevel.includes("5,000-10,000")) return 5;
-        if (trafficLevel.includes("2,000-5,000")) return 4;
-        if (trafficLevel.includes("1,000-2,000")) return 3;
-        if (trafficLevel.includes("500-1,000")) return 2;
-        if (trafficLevel.includes("Under 500")) return 1;
-        return 0;
-      };
+      // First use the trafficScore which already factors in source and traffic level
+      if (a.trafficScore !== b.trafficScore) {
+        return (b.trafficScore || 0) - (a.trafficScore || 0);
+      }
       
-      return getTrafficValue(b.trafficLevel as string) - getTrafficValue(a.trafficLevel as string);
+      // If traffic scores are equal, prioritize by source
+      const sourceOrder = { 'google': 3, 'bing': 2, 'yahoo': 1, 'duckduckgo': 0, 'unknown': -1 };
+      const aSource = a.source || 'unknown';
+      const bSource = b.source || 'unknown';
+      
+      return (sourceOrder[bSource as keyof typeof sourceOrder] || -1) - 
+             (sourceOrder[aSource as keyof typeof sourceOrder] || -1);
     });
     
     // If we have no results, return an empty array instead of using fallback data
