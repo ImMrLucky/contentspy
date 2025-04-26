@@ -47,7 +47,6 @@ interface TrafficHeatmapProps {
 export default function TrafficHeatmap({ competitorContent }: TrafficHeatmapProps) {
   const [viewMode, setViewMode] = useState<string>("all");
   const [threshold, setThreshold] = useState<number[]>([1]); // Traffic threshold filter
-  const [sourceFilter, setSourceFilter] = useState<string>("all"); // Filter by search engine source
   const [heatmapData, setHeatmapData] = useState<HeatmapCell[]>([]);
   const [domains, setDomains] = useState<string[]>([]);
   const [selectedCell, setSelectedCell] = useState<HeatmapCell | null>(null);
@@ -97,14 +96,8 @@ export default function TrafficHeatmap({ competitorContent }: TrafficHeatmapProp
       meetsTrafficLevel = cell.trafficValue < 3;
     }
     
-    // Then check if it meets source filter
-    let meetsSourceFilter = true;
-    if (sourceFilter !== "all") {
-      meetsSourceFilter = cell.source === sourceFilter;
-    }
-    
-    // Return true only if it meets all filters
-    return meetsThreshold && meetsTrafficLevel && meetsSourceFilter;
+    // Return true only if it meets all filters (no source filter needed as all results are from Google)
+    return meetsThreshold && meetsTrafficLevel;
   });
   
   // Get color intensity based on traffic value (1-7)
@@ -274,23 +267,12 @@ export default function TrafficHeatmap({ competitorContent }: TrafficHeatmapProp
           
           {/* Search engine source legend */}
           <div className="flex flex-wrap items-center gap-3 pt-2 border-t">
-            <span className="text-xs font-medium">Sources:</span>
+            <span className="text-xs font-medium">Source:</span>
             <div className="flex items-center">
               <span className="bg-blue-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center mr-1">G</span>
               <span className="text-xs">Google</span>
             </div>
-            <div className="flex items-center">
-              <span className="bg-teal-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center mr-1">B</span>
-              <span className="text-xs">Bing</span>
-            </div>
-            <div className="flex items-center">
-              <span className="bg-purple-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center mr-1">Y</span>
-              <span className="text-xs">Yahoo</span>
-            </div>
-            <div className="flex items-center">
-              <span className="bg-orange-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center mr-1">D</span>
-              <span className="text-xs">DuckDuckGo</span>
-            </div>
+            <span className="text-xs text-muted-foreground ml-2">200 results per search</span>
           </div>
         </div>
       </CardContent>

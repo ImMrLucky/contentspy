@@ -1268,10 +1268,8 @@ export const processCompetitorContent = async (
         return (b.trafficScore || 0) - (a.trafficScore || 0);
       }
       
-      // All sources are Google now, so sort by position if available
-      const aPosition = a.position || 100;
-      const bPosition = b.position || 100;
-      return aPosition - bPosition;
+      // All sources are Google now, just use alphabetical sorting as a fallback
+      return (a.domain || '').localeCompare(b.domain || '');
     });
     
     // If we have no results, return an empty array instead of using fallback data
