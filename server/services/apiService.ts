@@ -268,59 +268,92 @@ export const findCompetitorDomains = async (domain: string, limit = 10, keywords
 };
 
 // Web scrape search results directly from Google
-export const scrapeGoogleSearchResults = async (query: string, limit = 100): Promise<any[]> => {
+export const scrapeGoogleSearchResults = async (query: string, limit = 200): Promise<any[]> => {
   try {
     console.log(`Scraping Google search results for: ${query}`);
     
-    // Format query for URL
-    const formattedQuery = encodeURIComponent(query);
-    const url = `https://www.google.com/search?q=${formattedQuery}&num=100`;
+    // We need to make multiple requests to get 200 results (Google shows 100 max per page)
+    const allResults: any[] = [];
     
-    // Make request with random user agent
-    const response = await axios.get(url, {
-      headers: {
-        'User-Agent': getRandomUserAgent(),
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-        'Cache-Control': 'max-age=0'
-      }
-    });
-    
-    // Load HTML with Cheerio
-    const $ = cheerio.load(response.data);
-    const results: any[] = [];
-    
-    // Select all search result divs (adjust selector if needed)
-    $('.g').each((i, el) => {
-      if (i >= limit) return false; // Stop after reaching limit
+    for (let page = 0; page < 2; page++) {
+      // Format query for URL
+      const formattedQuery = encodeURIComponent(query);
+      const start = page * 100;
+      const url = `https://www.google.com/search?q=${formattedQuery}&num=100&start=${start}&filter=0`;
       
-      const titleEl = $(el).find('h3');
-      const linkEl = $(el).find('a').first();
-      const snippetEl = $(el).find('.VwiC3b');
+      // Make request with random user agent
+      const response = await axios.get(url, {
+        headers: {
+          'User-Agent': getRandomUserAgent(),
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.5',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Connection': 'keep-alive',
+          'Upgrade-Insecure-Requests': '1',
+          'Cache-Control': 'max-age=0'
+        },
+        timeout: 15000 // 15 second timeout
+      });
       
-      // Only include if we have all elements
-      if (titleEl.length && linkEl.length) {
-        const title = titleEl.text().trim();
-        const link = linkEl.attr('href');
-        const snippet = snippetEl.text().trim();
+      // Load HTML with Cheerio
+      const $ = cheerio.load(response.data);
+      
+      // Select all search result divs - try multiple selector patterns for better coverage
+      $('.g, .Gx5Zad, .tF2Cxc, .yuRUbf').each((i, el) => {
+        // Only collect up to limit results
+        if (allResults.length >= limit) return false;
         
-        // Skip if link doesn't start with http
-        if (!link || !link.startsWith('http')) return;
+        let titleEl, linkEl, snippetEl;
         
-        results.push({
-          title,
-          link,
-          snippet,
-          position: i + 1
-        });
-      }
-    });
+        // Try different selector patterns based on Google's current layout
+        titleEl = $(el).find('h3, .DKV0Md');
+        linkEl = $(el).find('a[href^="http"], .yuRUbf a');
+        snippetEl = $(el).find('.VwiC3b, .lEBKkf, .s3v9rd');
+        
+        // Only include if we found title and link
+        if (titleEl.length && linkEl.length) {
+          const title = titleEl.text().trim();
+          // Get proper href attribute - Google sometimes redirects, get the actual URL
+          const linkHref = linkEl.attr('href') || '';
+          let link = linkHref;
+          
+          // Extract the actual URL if it's a Google redirect
+          if (linkHref.includes('/url?')) {
+            try {
+              const urlObj = new URL(linkHref);
+              const actualUrl = urlObj.searchParams.get('q') || urlObj.searchParams.get('url');
+              if (actualUrl) link = actualUrl;
+            } catch (e) {
+              // Just use the original if we can't parse it
+            }
+          }
+          
+          const snippet = snippetEl.text().trim();
+          
+          // Skip if link doesn't start with http or if it's empty
+          if (!link || !link.startsWith('http')) return;
+          
+          // Skip if title or link is empty
+          if (!title || !link) return;
+          
+          // Avoid duplicate results
+          if (allResults.some(result => result.link === link)) return;
+          
+          allResults.push({
+            title,
+            link,
+            snippet,
+            position: allResults.length + 1
+          });
+        }
+      });
+      
+      // Wait a short delay before next request to avoid rate limiting
+      if (page < 1) await new Promise(r => setTimeout(r, 2000));
+    }
     
-    console.log(`Scraped ${results.length} Google results for "${query}"`);
-    return results;
+    console.log(`Scraped ${allResults.length} Google results for "${query}"`);
+    return allResults;
   } catch (error) {
     console.error(`Error scraping Google search results: ${error}`);
     return [];
@@ -328,52 +361,78 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 100): Pro
 };
 
 // Web scrape search results directly from Bing
-export const scrapeBingSearchResults = async (query: string, limit = 100): Promise<any[]> => {
+export const scrapeBingSearchResults = async (query: string, limit = 200): Promise<any[]> => {
   try {
     console.log(`Scraping Bing search results for: ${query}`);
     
-    // Format query for URL
-    const formattedQuery = encodeURIComponent(query);
-    const url = `https://www.bing.com/search?q=${formattedQuery}&count=100`;
+    // Bing also requires multiple requests to get 200 results
+    const allResults: any[] = [];
     
-    // Make request with random user agent
-    const response = await axios.get(url, {
-      headers: {
-        'User-Agent': getRandomUserAgent(),
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1'
-      }
-    });
-    
-    // Load HTML with Cheerio
-    const $ = cheerio.load(response.data);
-    const results: any[] = [];
-    
-    // Select all search result elements
-    $('.b_algo').each((i, el) => {
-      if (i >= limit) return false; // Stop after reaching limit
+    for (let page = 0; page < 4; page++) {
+      // Format query for URL - Bing shows 50 results per page
+      const formattedQuery = encodeURIComponent(query);
+      const first = page * 50 + 1;
+      const url = `https://www.bing.com/search?q=${formattedQuery}&count=50&first=${first}`;
       
-      const titleEl = $(el).find('h2 a');
-      const link = titleEl.attr('href');
-      const title = titleEl.text().trim();
-      const snippet = $(el).find('.b_caption p').text().trim();
-      
-      // Skip if link doesn't start with http
-      if (!link || !link.startsWith('http')) return;
-      
-      results.push({
-        title,
-        link,
-        snippet,
-        position: i + 1
+      // Make request with random user agent
+      const response = await axios.get(url, {
+        headers: {
+          'User-Agent': getRandomUserAgent(),
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.5',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Connection': 'keep-alive',
+          'Upgrade-Insecure-Requests': '1'
+        },
+        timeout: 15000 // 15 second timeout
       });
-    });
+      
+      // Load HTML with Cheerio
+      const $ = cheerio.load(response.data);
+      
+      // Select all search result elements
+      $('.b_algo, .b_algoSlug, .b_snippetBigText').each((i, el) => {
+        // Only collect up to limit results
+        if (allResults.length >= limit) return false;
+        
+        let title = '', link = '', snippet = '';
+        
+        // Try different selector patterns
+        const titleEl = $(el).find('h2 a, .b_title a');
+        const snippetEl = $(el).find('.b_caption p, .b_snippet, .b_snippetBigText');
+        
+        if (titleEl.length) {
+          title = titleEl.text().trim();
+          link = titleEl.attr('href') || '';
+        }
+        
+        if (snippetEl.length) {
+          snippet = snippetEl.text().trim();
+        }
+        
+        // Skip if link doesn't start with http or if it's empty
+        if (!link || !link.startsWith('http')) return;
+        
+        // Skip if title or link is empty
+        if (!title || !link) return;
+        
+        // Avoid duplicate results
+        if (allResults.some(result => result.link === link)) return;
+        
+        allResults.push({
+          title,
+          link,
+          snippet,
+          position: allResults.length + 1
+        });
+      });
+      
+      // Wait a short delay before next request to avoid rate limiting
+      if (page < 3) await new Promise(r => setTimeout(r, 2000));
+    }
     
-    console.log(`Scraped ${results.length} Bing results for "${query}"`);
-    return results;
+    console.log(`Scraped ${allResults.length} Bing results for "${query}"`);
+    return allResults;
   } catch (error) {
     console.error(`Error scraping Bing search results: ${error}`);
     return [];
@@ -477,45 +536,145 @@ export const processCompetitorContent = async (
   try {
     console.log(`Finding competitor websites for ${domain}...`);
     
-    // Get actual competitors (not just search results)
-    const competitors = await findCompetitorDomains(domain, 15, keywords);
+    // Extract domain name without TLD for direct search
+    const domainName = domain.replace(/^www\./i, '').split('.')[0].toLowerCase();
+    
+    // Formulate industry-specific search to find direct competitors
+    const industryTerm = extractIndustryFromDomain(domain);
+    
+    // Build a direct search query that uses the domain name + keywords + industry
+    const directCompetitorQuery = keywords 
+      ? `${domainName} ${keywords} competitor OR alternative OR similar`
+      : `${domainName} ${industryTerm} competitor OR alternative OR similar`;
+      
+    console.log(`Using direct competitor query: "${directCompetitorQuery}"`);
+    
+    // Get competitor domains directly through web scraping - this is more reliable than SerpAPI
+    let directCompetitors: string[] = [];
+    
+    try {
+      // First try scraping Google for competitors
+      console.log("Scraping Google for competitor domains...");
+      const googleResults = await scrapeGoogleSearchResults(directCompetitorQuery, 100);
+      
+      if (googleResults.length > 0) {
+        const domains = googleResults
+          .map(result => extractDomain(result.link))
+          .filter(d => !!d && d !== domain) // Remove empty and self
+          .filter(d => 
+            // Filter out non-US domains and irrelevant sites
+            !d.includes(".co.uk") && 
+            !d.includes(".de") && 
+            !d.includes(".fr") && 
+            !d.includes(".es") && 
+            !d.includes(".ca") && 
+            !d.includes(".au") && 
+            !d.includes(".eu") &&
+            !d.includes(".io") &&
+            !d.includes(".org.uk") &&
+            !d.includes("facebook.com") &&
+            !d.includes("twitter.com") &&
+            !d.includes("instagram.com") &&
+            !d.includes("linkedin.com") &&
+            !d.includes("youtube.com") &&
+            !d.includes("reddit.com") &&
+            !d.includes("wikipedia.org")
+          );
+          
+        directCompetitors = Array.from(new Set(domains)); // Remove duplicates
+        console.log(`Found ${directCompetitors.length} direct competitors via Google scraping`);
+      }
+      
+      // If Google didn't return enough, try Bing
+      if (directCompetitors.length < 10) {
+        console.log("Not enough Google results, trying Bing for more competitors...");
+        const bingResults = await scrapeBingSearchResults(directCompetitorQuery, 100);
+        
+        if (bingResults.length > 0) {
+          const bingDomains = bingResults
+            .map(result => extractDomain(result.link))
+            .filter(d => !!d && d !== domain && !directCompetitors.includes(d)) // Only add new ones
+            .filter(d => 
+              !d.includes(".co.uk") && 
+              !d.includes(".de") && 
+              !d.includes(".fr") && 
+              !d.includes(".es") && 
+              !d.includes(".ca") && 
+              !d.includes(".au") && 
+              !d.includes(".eu") &&
+              !d.includes(".io") &&
+              !d.includes(".org.uk") &&
+              !d.includes("facebook.com") &&
+              !d.includes("twitter.com") &&
+              !d.includes("instagram.com") &&
+              !d.includes("linkedin.com") &&
+              !d.includes("youtube.com") &&
+              !d.includes("reddit.com") &&
+              !d.includes("wikipedia.org")
+            );
+            
+          directCompetitors = [...directCompetitors, ...bingDomains];
+          directCompetitors = Array.from(new Set(directCompetitors)); // Remove duplicates again
+          console.log(`Added ${bingDomains.length} more competitors from Bing`);
+        }
+      }
+    } catch (error) {
+      console.error("Error scraping for competitors:", error);
+    }
+    
+    // Fallback to our standard method if direct scraping failed
+    if (directCompetitors.length < 5) {
+      console.log("Direct competitor scraping yielded insufficient results, using fallback method");
+      // Get actual competitors from our database of industry-specific competitors
+      const competitors = await findCompetitorDomains(domain, 15, keywords);
+      directCompetitors = [...directCompetitors, ...competitors];
+      directCompetitors = Array.from(new Set(directCompetitors)); // Remove duplicates
+    }
     
     // Add similar websites from SimilarWeb if available
-    const similarWebsites = await getSimilarWebsites(domain);
-    const similarDomains = similarWebsites
-      .map(site => extractDomain(site))
-      .filter((d: unknown): d is string => 
-        !!d && typeof d === 'string' && d !== domain &&
-        // Filter out non-US domains
-        !d.includes(".co.uk") && 
-        !d.includes(".de") && 
-        !d.includes(".fr") && 
-        !d.includes(".es") && 
-        !d.includes(".ca") && 
-        !d.includes(".au") && 
-        !d.includes(".eu") &&
-        !d.includes(".io") &&
-        !d.includes(".org.uk")
-      );
+    try {
+      const similarWebsites = await getSimilarWebsites(domain);
+      const similarDomains = similarWebsites
+        .map(site => extractDomain(site))
+        .filter((d: unknown): d is string => 
+          !!d && typeof d === 'string' && d !== domain &&
+          !directCompetitors.includes(d) && // Only add domains we don't already have
+          // Filter out non-US domains
+          !d.includes(".co.uk") && 
+          !d.includes(".de") && 
+          !d.includes(".fr") && 
+          !d.includes(".es") && 
+          !d.includes(".ca") && 
+          !d.includes(".au") && 
+          !d.includes(".eu") &&
+          !d.includes(".io") &&
+          !d.includes(".org.uk")
+        );
+      
+      directCompetitors = [...directCompetitors, ...similarDomains];
+      directCompetitors = Array.from(new Set(directCompetitors)); // Remove duplicates
+      console.log(`Added ${similarDomains.length} similar websites from SimilarWeb`);
+    } catch (error) {
+      console.error("Error getting similar websites:", error);
+    }
     
     // Combine all competitor domains, ensuring no duplicates - get more competitors
-    const allCompetitorDomains = Array.from(new Set([...competitors, ...similarDomains])).slice(0, 20);
+    const allCompetitorDomains = directCompetitors.slice(0, 20);
     
     console.log(`Found ${allCompetitorDomains.length} total competitor domains`);
     console.log(`Competitor domains: ${allCompetitorDomains.join(', ')}`);
     
-    // For each competitor domain, use a simpler approach to avoid hitting API limits
-    // Increase to 12 domains to get more content
-    const topContentPromises = allCompetitorDomains.slice(0, 12).map(async (competitorDomain) => {
+    // For each competitor domain, use direct scraping to search for content
+    const topContentPromises = allCompetitorDomains.slice(0, 15).map(async (competitorDomain) => {
       try {
         console.log(`Fetching content for competitor: ${competitorDomain}`);
         
-        // Enhanced query to find only article/blog content and exclude root domain pages
-        const contentTypes = "article OR blog OR guide OR tutorial OR resource OR news";
-        const contentPaths = "blog OR article OR resource OR guide OR news OR post OR case-study";
+        // Create very specific query to find only relevant content articles/blogs using keywords
+        // Include original website's domain name in search to find related content
+        const contentTypes = "article OR blog OR guide OR tutorial OR resource OR news OR post";
         const query = keywords 
-          ? `site:${competitorDomain} -inurl:index -inurl:homepage -inurl:contact -inurl:about ${contentPaths} ${keywords} ${contentTypes}` 
-          : `site:${competitorDomain} -inurl:index -inurl:homepage -inurl:contact -inurl:about ${contentPaths} ${contentTypes}`;
+          ? `site:${competitorDomain} -inurl:index -inurl:homepage -inurl:contact -inurl:about ${domainName} ${keywords} ${contentTypes}` 
+          : `site:${competitorDomain} -inurl:index -inurl:homepage -inurl:contact -inurl:about ${domainName} ${industryTerm} ${contentTypes}`;
         
         // First try direct web scraping from Google
         let organicResults: any[] = [];
@@ -552,29 +711,11 @@ export const processCompetitorContent = async (
             }
           }
         } catch (error) {
+          // Log the error but don't return fallback content - let the function continue
           console.error(`Error with all search methods for ${competitorDomain}: ${error}`);
           
-          // Return fallback content if all methods fail
-          return [
-            {
-              domain: competitorDomain,
-              result: {
-                title: `Best Practices and Guides from ${competitorDomain}`,
-                link: `https://${competitorDomain}/blog/best-practices`,
-                snippet: `Industry insights and best practices from ${competitorDomain}. Read detailed guides and tutorials on the latest trends.`,
-                position: 1
-              }
-            }, 
-            {
-              domain: competitorDomain,
-              result: {
-                title: `Resources and Articles on ${competitorDomain}`,
-                link: `https://${competitorDomain}/resources/articles`,
-                snippet: `Explore in-depth articles and resources on ${competitorDomain} covering a range of industry topics and solutions.`,
-                position: 2
-              }
-            }
-          ];
+          // Return empty array instead of fallback content
+          return [];
         }
         
         // If we get here, we have results to process
@@ -771,70 +912,17 @@ export const processCompetitorContent = async (
       return getTrafficValue(b.trafficLevel as string) - getTrafficValue(a.trafficLevel as string);
     });
     
-    // Make sure we always return something even if there were issues
+    // If we have no results, return an empty array instead of using fallback data
     if (!competitorContent || competitorContent.length === 0) {
-      console.log("No competitor content found, returning fallback data");
-      // Return a more useful set of fallback content items with specific paths
-      return [
-        {
-          analysisId,
-          title: "Industry Best Practices Guide",
-          url: `https://${domain}/blog/industry-best-practices`,
-          domain: domain,
-          publishDate: "Recent",
-          description: "A comprehensive guide to industry best practices and standards. Explores key strategies and techniques for success.",
-          trafficLevel: "5,000-10,000 monthly visits",
-          keywords: ["best practices", "industry standards", "strategies", "techniques", "guide"]
-        },
-        {
-          analysisId,
-          title: "Top 10 Industry Trends for 2025",
-          url: `https://${domain}/resources/trends-2025`,
-          domain: domain,
-          publishDate: "Recent",
-          description: "Discover the most important industry trends for 2025 and beyond. Stay ahead of the competition with these insights.",
-          trafficLevel: "2,000-5,000 monthly visits",
-          keywords: ["trends", "industry", "2025", "forecast", "insights"]
-        },
-        {
-          analysisId,
-          title: "How to Optimize Your Business Strategy",
-          url: `https://${domain}/articles/optimize-business-strategy`,
-          domain: domain,
-          publishDate: "Recent",
-          description: "Learn practical steps to optimize your business strategy and achieve better results in today's competitive market.",
-          trafficLevel: "1,000-2,000 monthly visits",
-          keywords: ["optimization", "business strategy", "competitive", "results", "improvement"]
-        }
-      ];
+      console.log("No competitor content found, returning empty array");
+      return [];
     }
     
     return competitorContent;
   } catch (error) {
     console.error("Error processing competitor content:", error);
-    // Return minimal fallback data rather than crashing
-    return [
-      {
-        analysisId,
-        title: "Troubleshooting Guide: Content Analysis",
-        url: `https://${domain}/resources/content-analysis-guide`,
-        domain: domain,
-        publishDate: "Recent",
-        description: "Our comprehensive guide to analyzing content performance. Learn how to identify opportunities and improve your content strategy.",
-        trafficLevel: "1,000-2,000 monthly visits",
-        keywords: ["content analysis", "performance", "guide", "strategy", "improvement"]
-      },
-      {
-        analysisId,
-        title: "Content Strategy Best Practices",
-        url: `https://${domain}/blog/content-strategy`,
-        domain: domain,
-        publishDate: "Recent",
-        description: "Explore our recommended approaches to content strategy and planning. Includes practical templates and examples.",
-        trafficLevel: "2,000-5,000 monthly visits",
-        keywords: ["content strategy", "planning", "templates", "examples", "best practices"]
-      }
-    ];
+    // Log the error but return an empty array instead of fallback data
+    return [];
   }
 };
 
