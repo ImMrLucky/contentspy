@@ -95,53 +95,74 @@ export const findCompetitorDomains = async (domain: string, limit = 10): Promise
   try {
     console.log(`Finding direct competitors for domain: ${domain}`);
     
-    // Determine domain industry to find competitors in the same space
-    const industry = extractIndustryFromDomain(domain);
-    console.log(`Detected industry: ${industry}`);
+    // Extract domain name without TLD
+    const domainName = domain.replace(/^www\./i, '').split('.')[0].toLowerCase();
     
-    // Since we're hitting Cloudflare protection, let's use a simpler approach
-    // We'll define common competitors for major industries
-    
-    // Predefined competitors for common industries
-    const industryCompetitors: Record<string, string[]> = {
-      'seo': ['semrush.com', 'moz.com', 'ahrefs.com', 'majestic.com', 'seranking.com', 'serpstat.com', 'mangools.com', 'spyfu.com', 'similarweb.com', 'raven.com'],
-      'technology': ['techcrunch.com', 'wired.com', 'theverge.com', 'cnet.com', 'engadget.com', 'gizmodo.com', 'zdnet.com', 'pcmag.com', 'venturebeat.com', 'thenextweb.com'],
-      'retail': ['amazon.com', 'walmart.com', 'target.com', 'bestbuy.com', 'ebay.com', 'etsy.com', 'homedepot.com', 'wayfair.com', 'macys.com', 'costco.com'],
-      'healthcare': ['webmd.com', 'mayoclinic.org', 'healthline.com', 'medlineplus.gov', 'nih.gov', 'cdc.gov', 'who.int', 'medicinenet.com', 'everydayhealth.com', 'drugs.com'],
-      'food': ['allrecipes.com', 'food.com', 'epicurious.com', 'foodnetwork.com', 'bonappetit.com', 'seriouseats.com', 'eater.com', 'taste.com', 'simplyrecipes.com', 'delish.com'],
-      'travel': ['tripadvisor.com', 'expedia.com', 'booking.com', 'kayak.com', 'hotels.com', 'airbnb.com', 'travelocity.com', 'lonelyplanet.com', 'fodors.com', 'orbitz.com'],
-      'finance': ['nerdwallet.com', 'bankrate.com', 'investopedia.com', 'cnbc.com', 'bloomberg.com', 'fool.com', 'marketwatch.com', 'wsj.com', 'forbes.com', 'kiplinger.com'],
-      'marketing': ['hubspot.com', 'marketo.com', 'mailchimp.com', 'hootsuite.com', 'buffer.com', 'constantcontact.com', 'semrush.com', 'moz.com', 'ahrefs.com', 'salesforce.com'],
-      'software': ['microsoft.com', 'apple.com', 'adobe.com', 'oracle.com', 'salesforce.com', 'ibm.com', 'sap.com', 'vmware.com', 'autodesk.com', 'atlassian.com'],
-      'education': ['coursera.org', 'udemy.com', 'edx.org', 'khanacademy.org', 'pluralsight.com', 'skillshare.com', 'linkedin.com/learning', 'udacity.com', 'brilliant.org', 'masterclass.com']
+    // Generate a custom list of industry-specific competitors based on the analyzed domain
+    // These should be actual competitors not content sites
+    const customIndustryCompetitors: Record<string, string[]> = {
+      // Tech and software
+      'tech': ['github.com', 'stackoverflow.com', 'digitalocean.com', 'atlassian.com', 'jetbrains.com', 'heroku.com', 'netlify.com', 'vercel.com', 'gitlab.com', 'bitbucket.org'],
+      'soft': ['microsoft.com', 'oracle.com', 'salesforce.com', 'sap.com', 'adobe.com', 'autodesk.com', 'vmware.com', 'intuit.com', 'zoho.com', 'freshworks.com'],
+      'code': ['github.com', 'gitlab.com', 'stackoverflow.com', 'bitbucket.org', 'codepen.io', 'replit.com', 'codesandbox.io', 'jsfiddle.net', 'leetcode.com', 'hackerrank.com'],
+      
+      // Retail and e-commerce
+      'shop': ['amazon.com', 'ebay.com', 'walmart.com', 'etsy.com', 'shopify.com', 'aliexpress.com', 'target.com', 'bestbuy.com', 'newegg.com', 'overstock.com'],
+      'store': ['amazon.com', 'ebay.com', 'walmart.com', 'target.com', 'bestbuy.com', 'macys.com', 'costco.com', 'wayfair.com', 'homedepot.com', 'lowes.com'],
+      
+      // Healthcare
+      'health': ['mayoclinic.org', 'nih.gov', 'webmd.com', 'cdc.gov', 'healthline.com', 'who.int', 'clevelandclinic.org', 'medlineplus.gov', 'hopkinsmedicine.org', 'drugs.com'],
+      'medical': ['mayoclinic.org', 'webmd.com', 'medscape.com', 'uptodate.com', 'healthline.com', 'drugs.com', 'rxlist.com', 'nih.gov', 'cdc.gov', 'aafp.org'],
+      'doctor': ['zocdoc.com', 'healthgrades.com', 'doximity.com', 'vitals.com', 'webmd.com', 'mayoclinic.org', 'everydayhealth.com', 'medicinenet.com', 'ratemds.com', 'md.com'],
+      
+      // Finance
+      'bank': ['chase.com', 'bankofamerica.com', 'wellsfargo.com', 'citibank.com', 'capitalone.com', 'usbank.com', 'pnc.com', 'tdbank.com', 'ally.com', 'discover.com'],
+      'finance': ['bankrate.com', 'nerdwallet.com', 'investopedia.com', 'fool.com', 'bloomberg.com', 'cnbc.com', 'wsj.com', 'reuters.com', 'kiplinger.com', 'moneyunder30.com'],
+      'invest': ['vanguard.com', 'fidelity.com', 'schwab.com', 'etrade.com', 'robinhood.com', 'tdameritrade.com', 'morningstar.com', 'interactivebrokers.com', 'webull.com', 'ml.com'],
+      
+      // Marketing
+      'market': ['hubspot.com', 'mailchimp.com', 'marketo.com', 'buffer.com', 'hootsuite.com', 'constantcontact.com', 'segment.com', 'moz.com', 'semrush.com', 'ahrefs.com'],
+      'seo': ['semrush.com', 'ahrefs.com', 'moz.com', 'majestic.com', 'serpstat.com', 'seranking.com', 'spyfu.com', 'rankmath.com', 'yoast.com', 'searchenginejournal.com'],
+      
+      // Boilers and Heating
+      'boiler': ['worcesterbosch.co.uk', 'viessman.com', 'vaillant.co.uk', 'baxi.co.uk', 'glow-worm.co.uk', 'idealboilers.com', 'alpha-innovation.co.uk', 'potterton.co.uk', 'navien.com', 'ariston.com'],
+      'heat': ['worcesterbosch.co.uk', 'viessman.com', 'vaillant.co.uk', 'baxi.co.uk', 'lennox.com', 'rheem.com', 'ruud.com', 'goodmanmfg.com', 'carrier.com', 'york.com'],
+      'hvac': ['carrier.com', 'trane.com', 'lennox.com', 'yorkhvacdealer.com', 'goodmanmfg.com', 'rheem.com', 'ruud.com', 'amana-hac.com', 'daikin.com', 'mitsubishicomfort.com'],
+      
+      // Generic terms
+      'online': ['amazon.com', 'ebay.com', 'etsy.com', 'walmart.com', 'shopify.com', 'bestbuy.com', 'target.com', 'aliexpress.com', 'overstock.com', 'wayfair.com'],
+      'service': ['thumbtack.com', 'angi.com', 'taskrabbit.com', 'yelp.com', 'homeadvisor.com', 'upwork.com', 'fiverr.com', 'care.com', 'wyzant.com', 'rover.com'],
+      'supply': ['grainger.com', 'uline.com', 'mcmaster.com', 'globalindustrial.com', 'mscdirect.com', 'fastenal.com', 'officedepot.com', 'staples.com', 'homedepot.com', 'lowes.com'],
     };
     
-    // Fallback competitors for any industry
-    const generalCompetitors = [
-      'semrush.com', 'similarweb.com', 'crunchbase.com', 'g2.com', 'capterra.com',
-      'trustpilot.com', 'producthunt.com', 'techcrunch.com', 'forbes.com', 'inc.com'
-    ];
+    // Create a list of all possible matches based on the domain name
+    let matchedCompetitors: string[] = [];
     
-    // Attempt to find competitors for the identified industry
-    let competitors: string[] = [];
-    
-    // Check if we have predefined competitors for this industry
-    for (const [industryName, domainList] of Object.entries(industryCompetitors)) {
-      if (industry.includes(industryName) || industryName.includes(industry)) {
-        competitors = domainList.filter(d => d !== domain);
-        console.log(`Found predefined competitors for ${industryName} industry`);
-        break;
+    // Try to find direct matches in custom competitors
+    for (const [key, competitors] of Object.entries(customIndustryCompetitors)) {
+      if (domainName.includes(key)) {
+        matchedCompetitors.push(...competitors);
+        console.log(`Found matches for industry term: ${key}`);
       }
     }
     
-    // If no industry-specific competitors found, use general competitors
-    if (competitors.length === 0) {
-      competitors = generalCompetitors.filter(d => d !== domain);
-      console.log(`Using general competitors as fallback`);
-    }
+    // Remove duplicates and the analyzed domain itself
+    const uniqueCompetitors = Array.from(new Set(matchedCompetitors))
+      .filter(d => !domain.includes(d) && !d.includes(domain));
     
-    // Limited SerpAPI call to avoid Cloudflare blocks
-    let allCompetitors: string[] = [...competitors];
+    // Generic/default competitors for any domain that didn't match specific industries
+    // These are competitors for general business, prefer business sites not content sites
+    const defaultCompetitors = [
+      'g2.com', 'capterra.com', 'trustpilot.com', 'yelp.com', 'bbb.org',
+      'similarweb.com', 'thomasnet.com', 'crunchbase.com', 'glassdoor.com', 'indeed.com'
+    ];
+    
+    // Use matched competitors if we found any, otherwise use default
+    let finalCompetitors = uniqueCompetitors.length > 0 ? uniqueCompetitors : defaultCompetitors;
+    console.log(`Using ${finalCompetitors.length} competitors for ${domain}`);
+    
+    // Limited SerpAPI call to avoid Cloudflare blocks - will only try one additional query
+    let allCompetitors: string[] = [...finalCompetitors];
     
     // Since competitorQueries is no longer defined, let's use a direct approach instead
     try {
@@ -370,27 +391,55 @@ export const processCompetitorContent = async (
           keywords = extractKeywords(text, 5);
         }
         
-        // Generate more conservative, realistic monthly visit estimates
+        // Define accurate, conservative traffic ranges
         const visitRanges = [
-          "100-500 monthly visits",
-          "500-1,000 monthly visits", 
-          "1,000-2,500 monthly visits",
-          "2,500-5,000 monthly visits",
-          "5,000+ monthly visits"
+          "Under 500 monthly visits", 
+          "500-1,000 monthly visits",
+          "1,000-2,000 monthly visits",
+          "2,000-5,000 monthly visits",
+          "5,000-10,000 monthly visits",
+          "10,000-20,000 monthly visits", 
+          "20,000+ monthly visits"
         ];
         
-        // Assign more conservative traffic level based on position
-        let trafficLevel = "";
-        if (result.position && result.position <= 3) {
-          // Top positions get higher but still realistic traffic
-          trafficLevel = visitRanges[Math.min(4, Math.floor(Math.random() * 2) + 2)];
-        } else if (result.position && result.position <= 7) {
-          // Middle positions get moderate traffic
-          trafficLevel = visitRanges[Math.min(3, Math.floor(Math.random() * 2) + 1)];
-        } else {
-          // Lower positions get lower traffic
-          trafficLevel = visitRanges[Math.floor(Math.random() * 2)];
-        }
+        // More deterministic traffic estimates based on multiple factors
+        const estimateTrafficLevel = (domainName: string, position: number = 10): string => {
+          // Start with base domain popularity factor
+          let domainPopularity = 0;
+          
+          // Well-known major domains get higher traffic
+          const majorDomains = ['github.com', 'stackoverflow.com', 'amazon.com', 'microsoft.com', 
+            'apple.com', 'shopify.com', 'ebay.com', 'walmart.com', 'salesforce.com'];
+          
+          const mediumDomains = ['digitalocean.com', 'netlify.com', 'vercel.com', 'heroku.com',
+            'webflow.com', 'etsy.com', 'notion.so', 'godaddy.com', 'medium.com'];
+            
+          if (majorDomains.includes(domainName)) {
+            domainPopularity = 5; // Major popular domains
+          } else if (mediumDomains.includes(domainName)) {
+            domainPopularity = 3; // Medium popularity domains
+          } else {
+            domainPopularity = 1; // Standard domains
+          }
+          
+          // Consider position factor (higher = better)
+          const positionFactor = Math.max(0, 10 - position);
+          
+          // Calculate combined score
+          const score = domainPopularity + positionFactor;
+          
+          // Map score to traffic ranges
+          if (score >= 14) return visitRanges[6]; // 20,000+
+          if (score >= 12) return visitRanges[5]; // 10,000-20,000
+          if (score >= 10) return visitRanges[4]; // 5,000-10,000
+          if (score >= 8) return visitRanges[3];  // 2,000-5,000
+          if (score >= 6) return visitRanges[2];  // 1,000-2,000
+          if (score >= 4) return visitRanges[1];  // 500-1,000
+          return visitRanges[0]; // Under 500
+        };
+        
+        // Get traffic level using the new estimation function
+        const trafficLevel = estimateTrafficLevel(competitorDomain, result.position || 10);
         
         // Create competitor content object
         return {
@@ -417,11 +466,14 @@ export const processCompetitorContent = async (
     competitorContent.sort((a, b) => {
       const getTrafficValue = (trafficLevel?: string) => {
         if (!trafficLevel) return 0;
-        if (trafficLevel.includes("5,000+")) return 5;
-        if (trafficLevel.includes("2,500-5,000")) return 4;
-        if (trafficLevel.includes("1,000-2,500")) return 3;
+        if (trafficLevel.includes("20,000+")) return 7;
+        if (trafficLevel.includes("10,000-20,000")) return 6;
+        if (trafficLevel.includes("5,000-10,000")) return 5;
+        if (trafficLevel.includes("2,000-5,000")) return 4;
+        if (trafficLevel.includes("1,000-2,000")) return 3;
         if (trafficLevel.includes("500-1,000")) return 2;
-        return 1;
+        if (trafficLevel.includes("Under 500")) return 1;
+        return 0;
       };
       
       return getTrafficValue(b.trafficLevel as string) - getTrafficValue(a.trafficLevel as string);
