@@ -423,21 +423,29 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
           const cacheBuster = new Date().getTime() + Math.floor(Math.random() * 1000);
           url += `&random=${cacheBuster}`;
           
+          // Get request config with different parameters for this method
+          const reqConfig = getRequestConfig(retryAttempt + 5); // Use different set of params than method 1
+          
+          // Add additional browser-like headers
+          const headers = {
+            ...reqConfig.headers,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Connection': 'keep-alive',
+            'Referer': 'https://www.google.com/',
+            'Upgrade-Insecure-Requests': '1',
+            // Add browser-like headers
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate', 
+            'Sec-Fetch-Site': 'same-origin',
+            'Sec-Fetch-User': '?1'
+          };
+          
+          // Random timeout between 25-35 seconds
+          const timeout = 25000 + Math.floor(Math.random() * 10000);
+          
           const response = await axios.get(url, {
-            headers: {
-              'User-Agent': getRandomUserAgent(),
-              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-              'Accept-Language': 'en-US,en;q=0.9',
-              'Connection': 'keep-alive',
-              'Referer': 'https://www.google.com/',
-              'Upgrade-Insecure-Requests': '1',
-              // Add browser-like headers
-              'Sec-Fetch-Dest': 'document',
-              'Sec-Fetch-Mode': 'navigate', 
-              'Sec-Fetch-Site': 'same-origin',
-              'Sec-Fetch-User': '?1'
-            },
-            timeout: 30000
+            headers,
+            timeout
           });
           
           if (response.status === 429 || response.status === 403) {
@@ -511,12 +519,15 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
       }
     ];
     
-    // Try to get results using multiple methods and pages
+    // Try to get results using multiple methods and pages - with early exit optimizations
     let methodIndex = 0;
     let totalPages = 0;
     let success = false;
     
-    while (allResults.length < limit && totalPages < 8) {
+    // Default to a lower target for faster results
+    const targetResultCount = Math.min(limit, 50); // Aim for 50 results initially
+    
+    while (allResults.length < targetResultCount && totalPages < 6) {
       const method = scrapingMethods[methodIndex % scrapingMethods.length];
       const page = Math.floor(totalPages / 2); // Each method gets consecutive page numbers
       
@@ -527,8 +538,17 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
       methodIndex++;
       totalPages++;
       
-      // If we've tried both methods at least twice and have some results, exit early
-      if (totalPages >= 4 && allResults.length > 0) {
+      // Quick exit conditions to speed up response time:
+      
+      // 1. If we have at least 10 results after trying both methods once, exit early
+      if (totalPages >= 2 && allResults.length >= 10) {
+        console.log(`Found ${allResults.length} results quickly - returning early for better UX`);
+        break;
+      }
+      
+      // 2. If we have at least 25 results after trying both methods twice, that's good enough
+      if (totalPages >= 4 && allResults.length >= 25) {
+        console.log(`Found ${allResults.length} results - sufficient quantity for analysis`);
         break;
       }
       
@@ -945,14 +965,24 @@ export const processCompetitorContent = async (
     // Array to store Google results
     let googleResults: any[] = [];
     
-    // Try each query with Google to gather up to 200 results total
-    for (const query of searchQueries) {
-      if (googleResults.length >= 200) break; // Limit to a maximum of 200 Google results
+    // Try each query with Google to gather results, but with early exit for better performance
+    // We'll aim to get enough results faster rather than trying for the full 200
+    let targetQueryCount = Math.min(searchQueries.length, 2); // Only try the first 2 queries by default
+    
+    for (let i = 0; i < targetQueryCount; i++) {
+      const query = searchQueries[i];
+      
+      // Early exit if we already have enough results
+      if (googleResults.length >= 50) {
+        console.log(`Already have ${googleResults.length} results, skipping remaining queries for performance`);
+        break;
+      }
       
       try {
         console.log(`Scraping Google for query: "${query}"`);
-        // Request a larger number of results per query to help reach our 200 total goal
-        const results = await scrapeGoogleSearchResults(query, 200 - googleResults.length);
+        // Request fewer results per query for better rate limit handling
+        const maxResultsPerQuery = 50;
+        const results = await scrapeGoogleSearchResults(query, maxResultsPerQuery);
         
         if (results.length > 0) {
           console.log(`Found ${results.length} content results from Google for query "${query}"`);
@@ -970,8 +1000,14 @@ export const processCompetitorContent = async (
           console.log(`Adding ${newResults.length} unique Google results`);
           googleResults = [...googleResults, ...newResults];
           
+          // If we have a good number of results already, don't run additional queries
+          if (googleResults.length >= 30) {
+            console.log(`Reached ${googleResults.length} results with first ${i+1} queries, which is sufficient`);
+            break;
+          }
+          
           // Add a short delay between queries to avoid rate limiting
-          await randomDelay(2000, 4000);
+          await randomDelay(3000, 5000);
         }
       } catch (error) {
         console.error(`Error scraping Google for query "${query}":`, error);
@@ -982,42 +1018,47 @@ export const processCompetitorContent = async (
     
     console.log(`Collected a total of ${googleResults.length} Google search results`);
     
-    // If we have fewer than 50 results, try some additional queries with different patterns
-    if (googleResults.length < 50 && searchQueries.length > 0) {
+    // If we have too few results, try just ONE more variation to get some additional results
+    // This speeds up performance by not trying multiple fallback variations
+    if (googleResults.length < 20 && searchQueries.length > 0) {
       const baseQuery = searchQueries[0];
       
-      // Additional query variations to try
-      const queryVariations = [
-        `${baseQuery} guide`,
-        `${baseQuery} tutorial`,
-        `${baseQuery} best practices`,
-        `${baseQuery} tips`,
-        `${baseQuery} how to`
-      ];
+      // Pick just one variation based on the domain name to try
+      const domainParts = domain.split('.');
+      const domainPrefix = domainParts[0].toLowerCase();
       
-      for (const query of queryVariations) {
-        if (googleResults.length >= 200) break;
+      // Pick a variation that's most likely to work for this domain type
+      let queryVariation;
+      
+      if (domainPrefix.includes('how') || domainPrefix.includes('learn') || domainPrefix.includes('guide')) {
+        queryVariation = `"${baseQuery}" tutorial`;
+      } else if (domainPrefix.includes('blog') || domainPrefix.includes('news')) {
+        queryVariation = `"${baseQuery}" best practices`;
+      } else if (domainPrefix.includes('tech') || domainPrefix.includes('soft')) {
+        queryVariation = `"${baseQuery}" guide`;
+      } else {
+        // Default to a general guide-focused query
+        queryVariation = `"${baseQuery}" guide`;
+      }
+      
+      try {
+        console.log(`Trying one additional Google query variation: "${queryVariation}"`);
+        // Request fewer results for better rate limit handling
+        const results = await scrapeGoogleSearchResults(queryVariation, 20);
         
-        try {
-          console.log(`Trying additional Google query variation: "${query}"`);
-          const results = await scrapeGoogleSearchResults(query, 200 - googleResults.length);
+        if (results.length > 0) {
+          // Filter out duplicates
+          const newResults = results.filter(result => 
+            !googleResults.some(existingResult => existingResult.link === result.link)
+          );
           
-          if (results.length > 0) {
-            // Filter out duplicates
-            const newResults = results.filter(result => 
-              !googleResults.some(existingResult => existingResult.link === result.link)
-            );
-            
-            newResults.forEach(result => result.source = 'google');
-            googleResults = [...googleResults, ...newResults];
-            
-            console.log(`Added ${newResults.length} more results from variation "${query}"`);
-            await randomDelay(2000, 4000);
-          }
-        } catch (error) {
-          console.error(`Error with query variation "${query}":`, error);
-          await randomDelay(5000, 10000);
+          newResults.forEach(result => result.source = 'google');
+          googleResults = [...googleResults, ...newResults];
+          
+          console.log(`Added ${newResults.length} more results from variation "${queryVariation}"`);
         }
+      } catch (error) {
+        console.error(`Error with query variation "${queryVariation}":`, error);
       }
     }
     
@@ -1202,8 +1243,29 @@ export const processCompetitorContent = async (
     
     console.log(`Found ${allTopContent.length} pieces of competitor content`);
     
-    // Process each result to create competitor content objects
-    const competitorContentPromises = allTopContent.map(async ({ domain: competitorDomain, result }: any) => {
+    // Helper function type definitions to avoid issues with strict mode
+    type ContentItem = { domain: string, result: any };
+    
+    // Helper function to process in smaller batches to avoid overwhelming the system
+    const processBatch = async (items: ContentItem[], batchSize: number): Promise<any[]> => {
+      const results = [];
+      
+      for (let i = 0; i < items.length; i += batchSize) {
+        const batch = items.slice(i, i + batchSize);
+        const batchResults = await Promise.all(batch.map(item => processContentItem(item)));
+        results.push(...batchResults);
+        
+        // Add a small delay between batches
+        if (i + batchSize < items.length) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      }
+      
+      return results;
+    };
+    
+    // Process an individual content item
+    const processContentItem = async ({ domain: competitorDomain, result }: ContentItem): Promise<any> => {
       try {
         // Skip if it's somehow the original domain
         if (competitorDomain === domain) {
@@ -1344,10 +1406,10 @@ export const processCompetitorContent = async (
         console.error(`Error processing content from ${competitorDomain}:`, error);
         return null;
       }
-    });
+    }
     
-    // Filter out null results and sort by our new trafficScore which prioritizes Google & high traffic results
-    const competitorContent = (await Promise.all(competitorContentPromises))
+    // Process content in batches of 5 items at a time to avoid overwhelming the server
+    const competitorContent = (await processBatch(allTopContent, 5))
       .filter(content => content !== null) as Partial<CompetitorContent & {
         keywords: string[],
         trafficScore: number,
