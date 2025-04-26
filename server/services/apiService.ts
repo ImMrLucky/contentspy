@@ -179,7 +179,7 @@ export const findCompetitorDomains = async (domain: string, limit = 10, keywords
     let finalCompetitors = uniqueCompetitors.length > 0 ? uniqueCompetitors : defaultCompetitors;
     console.log(`Using ${finalCompetitors.length} competitors for ${domain}`);
     
-    // Limited SerpAPI call to avoid Cloudflare blocks - will only try one additional query
+    // We'll use our predefined competitor list combined with direct scraping
     let allCompetitors: string[] = [...finalCompetitors];
     
     // Since competitorQueries is no longer defined, let's use a direct approach instead
@@ -952,35 +952,27 @@ export const processCompetitorContent = async (
       }
     }
     
-    // Use SerpAPI as a fallback if direct scraping didn't yield enough results or hit rate limits
+    // Use Yahoo and DuckDuckGo as a fallback if Google/Bing didn't yield enough results
     if (allContentResults.length < 40) {
       try {
-        console.log("Direct scraping yielded insufficient results, using SerpAPI as fallback");
+        console.log("Direct Google/Bing scraping yielded insufficient results, trying Yahoo");
         
-        // Try multiple queries with SerpAPI to get more diverse results
+        // Try multiple queries with Yahoo
         for (let i = 0; i < Math.min(searchQueries.length, 2); i++) {
           const query = searchQueries[i];
-          console.log(`Using SerpAPI for query: "${query}"`);
-          
-          const params = {
-            q: query,
-            num: 100,
-            engine: "google",
-            gl: "us", // country = US
-            hl: "en", // language = English
-          };
+          console.log(`Using Yahoo for query: "${query}"`);
           
           try {
-            const serpResults = await serpapi.getJson(params);
+            const yahooResults = await scrapeYahooSearchResults(query, 50);
             
-            if (serpResults && serpResults.organic_results) {
-              const newResults = serpResults.organic_results.filter((serpResult: any) => 
+            if (yahooResults.length > 0) {
+              const newResults = yahooResults.filter(yahooResult => 
                 !allContentResults.some(existingResult => 
-                  existingResult.link === serpResult.link
+                  existingResult.link === yahooResult.link
                 )
               );
               
-              console.log(`Adding ${newResults.length} unique results from SerpAPI query ${i+1}`);
+              console.log(`Adding ${newResults.length} unique results from Yahoo query ${i+1}`);
               allContentResults = [...allContentResults, ...newResults];
               
               // If we've got enough results, no need to keep trying
@@ -988,16 +980,52 @@ export const processCompetitorContent = async (
                 break;
               }
               
-              // Brief pause between SerpAPI queries
-              await randomDelay(1000, 2000);
+              // Brief pause between Yahoo queries
+              await randomDelay(1500, 3000);
             }
           } catch (error) {
-            console.error(`Error with SerpAPI query ${i+1}:`, error);
+            console.error(`Error with Yahoo query ${i+1}:`, error);
             continue; // Try the next query
           }
         }
+        
+        // If still not enough, try DuckDuckGo
+        if (allContentResults.length < 30) {
+          console.log("Yahoo results insufficient, trying DuckDuckGo");
+          
+          for (let i = 0; i < Math.min(searchQueries.length, 2); i++) {
+            const query = searchQueries[i];
+            console.log(`Using DuckDuckGo for query: "${query}"`);
+            
+            try {
+              const ddgResults = await scrapeDuckDuckGoResults(query, 40);
+              
+              if (ddgResults.length > 0) {
+                const newResults = ddgResults.filter(ddgResult => 
+                  !allContentResults.some(existingResult => 
+                    existingResult.link === ddgResult.link
+                  )
+                );
+                
+                console.log(`Adding ${newResults.length} unique results from DuckDuckGo query ${i+1}`);
+                allContentResults = [...allContentResults, ...newResults];
+                
+                // If we've got enough results, stop
+                if (allContentResults.length >= 60) {
+                  break;
+                }
+                
+                // Brief pause between queries
+                await randomDelay(1500, 3000);
+              }
+            } catch (error) {
+              console.error(`Error with DuckDuckGo query ${i+1}:`, error);
+              continue;
+            }
+          }
+        }
       } catch (error) {
-        console.error("Error with all SerpAPI fallback attempts:", error);
+        console.error("Error with all fallback search attempts:", error);
       }
     }
     
