@@ -4,7 +4,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Award, BookOpen, Search, BarChart2 } from "lucide-react";
 import ExportButtons from "./ExportButtons";
-import TrafficVisualizer from "./TrafficVisualizer";
+import TrafficHeatmap from "./TrafficHeatmap";
+import ContentTrends from "./ContentTrends";
 
 interface ResultsPanelProps {
   analyzedUrl: string;
