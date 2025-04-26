@@ -894,19 +894,17 @@ export const processCompetitorContent = async (
     
     console.log(`Searching for relevant content with query: "${directContentQuery}"`);
     
-    // Arrays to store results from each search engine separately
+    // Array to store Google results
     let googleResults: any[] = [];
-    let bingResults: any[] = [];
-    let yahooResults: any[] = [];
-    let ddgResults: any[] = [];
     
-    // Try each query with Google first - we'll save these separately to prioritize them
+    // Try each query with Google to gather up to 200 results total
     for (const query of searchQueries) {
-      if (googleResults.length >= 75) break; // Limit to 75 results from Google
+      if (googleResults.length >= 200) break; // Limit to a maximum of 200 Google results
       
       try {
         console.log(`Scraping Google for query: "${query}"`);
-        const results = await scrapeGoogleSearchResults(query, 75); // Increased to 75 results
+        // Request a larger number of results per query to help reach our 200 total goal
+        const results = await scrapeGoogleSearchResults(query, 200 - googleResults.length);
         
         if (results.length > 0) {
           console.log(`Found ${results.length} content results from Google for query "${query}"`);
@@ -918,124 +916,65 @@ export const processCompetitorContent = async (
             )
           );
           
-          // Mark these as Google results (for prioritization later)
+          // Mark these as Google results (for tracking)
           newResults.forEach(result => result.source = 'google');
           
           console.log(`Adding ${newResults.length} unique Google results`);
           googleResults = [...googleResults, ...newResults];
           
-          // Add a short delay between queries
-          await randomDelay(1000, 2000);
+          // Add a short delay between queries to avoid rate limiting
+          await randomDelay(2000, 4000);
         }
       } catch (error) {
         console.error(`Error scraping Google for query "${query}":`, error);
+        // Add more delays on errors to recover from rate limiting
+        await randomDelay(5000, 10000);
       }
     }
     
-    // Now try Bing search engine
-    for (const query of searchQueries) {
-      if (bingResults.length >= 75) break; // Limit to 75 results from Bing
+    console.log(`Collected a total of ${googleResults.length} Google search results`);
+    
+    // If we have fewer than 50 results, try some additional queries with different patterns
+    if (googleResults.length < 50 && searchQueries.length > 0) {
+      const baseQuery = searchQueries[0];
       
-      try {
-        console.log(`Scraping Bing for query: "${query}"`);
-        const results = await scrapeBingSearchResults(query, 75); // Increased to 75 results
-        
-        if (results.length > 0) {
-          console.log(`Found ${results.length} content results from Bing for query "${query}"`);
-          
-          // Filter out duplicates before adding (both within Bing and against Google)
-          const newResults = results.filter(result => 
-            !bingResults.some(existingResult => existingResult.link === result.link) &&
-            !googleResults.some(existingResult => existingResult.link === result.link)
-          );
-          
-          // Mark these as Bing results
-          newResults.forEach(result => result.source = 'bing');
-          
-          console.log(`Adding ${newResults.length} unique Bing results`);
-          bingResults = [...bingResults, ...newResults];
-          
-          // Add a short delay between queries
-          await randomDelay(1200, 2500);
-        }
-      } catch (error) {
-        console.error(`Error scraping Bing for query "${query}":`, error);
-      }
-    }
-    
-    // Now try Yahoo search engine
-    for (const query of searchQueries) {
-      if (yahooResults.length >= 75) break; // Limit to 75 results from Yahoo
+      // Additional query variations to try
+      const queryVariations = [
+        `${baseQuery} guide`,
+        `${baseQuery} tutorial`,
+        `${baseQuery} best practices`,
+        `${baseQuery} tips`,
+        `${baseQuery} how to`
+      ];
       
-      try {
-        console.log(`Scraping Yahoo for query: "${query}"`);
-        const results = await scrapeYahooSearchResults(query, 75); // Increased to 75 results
+      for (const query of queryVariations) {
+        if (googleResults.length >= 200) break;
         
-        if (results.length > 0) {
-          console.log(`Found ${results.length} content results from Yahoo for query "${query}"`);
+        try {
+          console.log(`Trying additional Google query variation: "${query}"`);
+          const results = await scrapeGoogleSearchResults(query, 200 - googleResults.length);
           
-          // Filter out duplicates before adding (comparing to all previous results)
-          const newResults = results.filter(result => 
-            !yahooResults.some(existingResult => existingResult.link === result.link) &&
-            !googleResults.some(existingResult => existingResult.link === result.link) &&
-            !bingResults.some(existingResult => existingResult.link === result.link)
-          );
-          
-          // Mark these as Yahoo results
-          newResults.forEach(result => result.source = 'yahoo');
-          
-          console.log(`Adding ${newResults.length} unique Yahoo results`);
-          yahooResults = [...yahooResults, ...newResults];
-          
-          // Add a short delay between queries
-          await randomDelay(1500, 3000);
+          if (results.length > 0) {
+            // Filter out duplicates
+            const newResults = results.filter(result => 
+              !googleResults.some(existingResult => existingResult.link === result.link)
+            );
+            
+            newResults.forEach(result => result.source = 'google');
+            googleResults = [...googleResults, ...newResults];
+            
+            console.log(`Added ${newResults.length} more results from variation "${query}"`);
+            await randomDelay(2000, 4000);
+          }
+        } catch (error) {
+          console.error(`Error with query variation "${query}":`, error);
+          await randomDelay(5000, 10000);
         }
-      } catch (error) {
-        console.error(`Error scraping Yahoo for query "${query}":`, error);
       }
     }
     
-    // Finally try DuckDuckGo search engine
-    for (const query of searchQueries) {
-      if (ddgResults.length >= 75) break; // Limit to 75 results from DuckDuckGo
-      
-      try {
-        console.log(`Scraping DuckDuckGo for query: "${query}"`);
-        const results = await scrapeDuckDuckGoResults(query, 75); // Increased to 75 results
-        
-        if (results.length > 0) {
-          console.log(`Found ${results.length} content results from DuckDuckGo for query "${query}"`);
-          
-          // Filter out duplicates before adding (comparing to all previous results)
-          const newResults = results.filter(result => 
-            !ddgResults.some(existingResult => existingResult.link === result.link) &&
-            !googleResults.some(existingResult => existingResult.link === result.link) &&
-            !bingResults.some(existingResult => existingResult.link === result.link) &&
-            !yahooResults.some(existingResult => existingResult.link === result.link)
-          );
-          
-          // Mark these as DuckDuckGo results
-          newResults.forEach(result => result.source = 'duckduckgo');
-          
-          console.log(`Adding ${newResults.length} unique DuckDuckGo results`);
-          ddgResults = [...ddgResults, ...newResults];
-          
-          // Add a short delay between queries
-          await randomDelay(1800, 3500);
-        }
-      } catch (error) {
-        console.error(`Error scraping DuckDuckGo for query "${query}":`, error);
-      }
-    }
-    
-    // Combine all results from different search engines - prioritize Google results first
-    // Merge in order: Google (highest priority) -> Bing -> Yahoo -> DuckDuckGo
-    const allResults = [
-      ...googleResults,
-      ...bingResults,
-      ...yahooResults,
-      ...ddgResults
-    ];
+    // Use only Google results as requested
+    const allResults = [...googleResults];
     
     console.log(`Found total of ${allResults.length} content results across all search engines`);
     
