@@ -1406,7 +1406,7 @@ export const processCompetitorContent = async (
         console.error(`Error processing content from ${competitorDomain}:`, error);
         return null;
       }
-    }
+    };
     
     // Process content in batches of 5 items at a time to avoid overwhelming the server
     const competitorContent = (await processBatch(allTopContent, 5))
