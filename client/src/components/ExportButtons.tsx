@@ -4,7 +4,8 @@ import {
   exportAnalysisAsCSV, 
   exportAnalysisAsJSON, 
   exportInsightsAsCSV, 
-  exportRecommendationsAsCSV 
+  exportRecommendationsAsCSV,
+  exportCombinedCSV
 } from '@/lib/utils';
 import {
   DropdownMenu,
@@ -16,6 +17,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from '@/components/ui/button';
 import { Download } from 'lucide-react';
+import ExportWizard from './ExportWizard';
 
 interface ExportButtonsProps {
   results: AnalysisResult;
@@ -40,31 +42,42 @@ export default function ExportButtons({ results }: ExportButtonsProps) {
     exportAnalysisAsJSON(results);
   };
 
+  const handleExportComprehensiveCSV = () => {
+    exportCombinedCSV(results);
+  };
+
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="outline" className="flex items-center gap-1">
-          <Download className="h-4 w-4" />
-          <span>Export</span>
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuLabel>Export Options</DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={handleExportAllAsCSV}>
-          Export All as CSV
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={handleExportInsightsAsCSV}>
-          Export Insights as CSV
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={handleExportRecommendationsAsCSV}>
-          Export Recommendations as CSV
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={handleExportAllAsJSON}>
-          Export All as JSON
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <div className="flex items-center gap-2">
+      <ExportWizard results={results} />
+      
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="outline" className="flex items-center gap-1">
+            <Download className="h-4 w-4" />
+            <span>Export</span>
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuLabel>Export Options</DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={handleExportComprehensiveCSV}>
+            Export Comprehensive CSV
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={handleExportAllAsCSV}>
+            Export Content as CSV
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={handleExportInsightsAsCSV}>
+            Export Insights as CSV
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={handleExportRecommendationsAsCSV}>
+            Export Recommendations as CSV
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={handleExportAllAsJSON}>
+            Export All as JSON
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   );
 }

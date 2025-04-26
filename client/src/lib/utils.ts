@@ -166,3 +166,69 @@ function formatDateForFileName(): string {
   const now = new Date()
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
 }
+
+/**
+ * Export analysis as a nicely formatted CSV (removed PDF function)
+ * Keep this function name for compatibility but it now redirects to combined CSV
+ */
+export function exportAnalysisAsPDF(data: AnalysisResult): void {
+  if (!data) return
+  exportCombinedCSV(data)
+}
+
+/**
+ * Export combined data as a single CSV file
+ */
+export function exportCombinedCSV(data: AnalysisResult): void {
+  if (!data) return
+  
+  let csvContent = "COMPETITOR CONTENT ANALYSIS REPORT\n\n"
+  
+  // Add analysis metadata
+  csvContent += "ANALYSIS INFORMATION\n"
+  csvContent += `URL Analyzed,${data.analysis.url}\n`
+  csvContent += `Analysis Date,${new Date().toLocaleDateString()}\n\n`
+  
+  // Add insights section
+  csvContent += "INSIGHTS\n"
+  csvContent += `Top Content Type,${data.insights.topContentType}\n`
+  csvContent += `Average Content Length,${data.insights.avgContentLength}\n`
+  csvContent += `Key Competitors,${data.insights.keyCompetitors}\n`
+  csvContent += `Content Gap Score,${data.insights.contentGapScore}\n\n`
+  
+  // Add keyword clusters
+  csvContent += "KEYWORD CLUSTERS\n"
+  csvContent += "Keyword,Count\n"
+  data.insights.keywordClusters.forEach(cluster => {
+    csvContent += `"${cluster.name}",${cluster.count}\n`
+  })
+  csvContent += "\n"
+  
+  // Add recommendations
+  csvContent += "CONTENT RECOMMENDATIONS\n"
+  csvContent += "Title,Description,Keywords\n"
+  data.recommendations.forEach(rec => {
+    csvContent += `"${rec.title.replace(/"/g, '""')}",`
+    csvContent += `"${rec.description.replace(/"/g, '""')}",`
+    csvContent += `"${(rec.keywords || []).join(", ").replace(/"/g, '""')}"\n`
+  })
+  csvContent += "\n"
+  
+  // Add competitor content
+  csvContent += "COMPETITOR CONTENT\n"
+  csvContent += "Title,URL,Domain,Traffic Level,Keywords,Publish Date,Description\n"
+  data.competitorContent.forEach(content => {
+    csvContent += `"${(content.title || "").replace(/"/g, '""')}",`
+    csvContent += `"${(content.url || "").replace(/"/g, '""')}",`
+    csvContent += `"${(content.domain || "").replace(/"/g, '""')}",`
+    csvContent += `"${(content.trafficLevel || "").replace(/"/g, '""')}",`
+    csvContent += `"${(content.keywords || []).join(", ").replace(/"/g, '""')}",`
+    csvContent += `"${(content.publishDate || "").replace(/"/g, '""')}",`
+    csvContent += `"${(content.description || "").replace(/"/g, '""')}"\n`
+  })
+  
+  // Download the file
+  const domain = extractDomainFromUrl(data.analysis.url)
+  const fileName = `complete-analysis-${domain}-${formatDateForFileName()}.csv`
+  downloadFile(csvContent, fileName, "text/csv;charset=utf-8;")
+}
