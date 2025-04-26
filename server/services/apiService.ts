@@ -534,238 +534,191 @@ export const processCompetitorContent = async (
   keywords?: string
 ): Promise<Partial<CompetitorContent & {keywords: string[]}>[]> => {
   try {
-    console.log(`Finding competitor websites for ${domain}...`);
+    console.log(`Starting content analysis for ${domain}...`);
     
-    // Extract domain name without TLD for direct search
+    // Extract domain name and TLD for better searching
     const domainName = domain.replace(/^www\./i, '').split('.')[0].toLowerCase();
-    
-    // Formulate industry-specific search to find direct competitors
     const industryTerm = extractIndustryFromDomain(domain);
     
-    // Build a direct search query that uses the domain name + keywords + industry
-    const directCompetitorQuery = keywords 
-      ? `${domainName} ${keywords} competitor OR alternative OR similar`
-      : `${domainName} ${industryTerm} competitor OR alternative OR similar`;
-      
-    console.log(`Using direct competitor query: "${directCompetitorQuery}"`);
+    // DIRECT CONTENT SEARCH APPROACH
+    // Rather than finding competitors first, we'll directly search for relevant content
+    // across the entire web that matches the user's domain and keywords
     
-    // Get competitor domains directly through web scraping - this is more reliable than SerpAPI
-    let directCompetitors: string[] = [];
+    // Build a direct content query to find articles and blogs related to the input
+    let directContentQuery = "";
     
+    if (keywords) {
+      // If user provided keywords, use them as the primary search focus
+      directContentQuery = `"${keywords}" -site:${domain} inurl:blog OR inurl:article OR inurl:guide OR inurl:resource`;
+    } else {
+      // Otherwise search for industry-specific content related to the domain
+      directContentQuery = `"${industryTerm}" -site:${domain} inurl:blog OR inurl:article OR inurl:guide OR inurl:resource`;
+    }
+    
+    console.log(`Searching for relevant content with query: "${directContentQuery}"`);
+    
+    // Array to store all content results from various search methods
+    let allContentResults: any[] = [];
+    
+    // 1. DIRECT GOOGLE SCRAPING - This is our primary source
     try {
-      // First try scraping Google for competitors
-      console.log("Scraping Google for competitor domains...");
-      const googleResults = await scrapeGoogleSearchResults(directCompetitorQuery, 100);
+      console.log("Scraping Google for relevant content articles...");
+      const googleResults = await scrapeGoogleSearchResults(directContentQuery, 200);
       
       if (googleResults.length > 0) {
-        const domains = googleResults
-          .map(result => extractDomain(result.link))
-          .filter(d => !!d && d !== domain) // Remove empty and self
-          .filter(d => 
-            // Filter out non-US domains and irrelevant sites
-            !d.includes(".co.uk") && 
-            !d.includes(".de") && 
-            !d.includes(".fr") && 
-            !d.includes(".es") && 
-            !d.includes(".ca") && 
-            !d.includes(".au") && 
-            !d.includes(".eu") &&
-            !d.includes(".io") &&
-            !d.includes(".org.uk") &&
-            !d.includes("facebook.com") &&
-            !d.includes("twitter.com") &&
-            !d.includes("instagram.com") &&
-            !d.includes("linkedin.com") &&
-            !d.includes("youtube.com") &&
-            !d.includes("reddit.com") &&
-            !d.includes("wikipedia.org")
+        console.log(`Found ${googleResults.length} content results from Google`);
+        allContentResults = [...allContentResults, ...googleResults];
+      }
+    } catch (error) {
+      console.error("Error scraping Google for content:", error);
+    }
+    
+    // 2. DIRECT BING SCRAPING - Additional source for more content
+    try {
+      console.log("Scraping Bing for relevant content articles...");
+      const bingResults = await scrapeBingSearchResults(directContentQuery, 200);
+      
+      if (bingResults.length > 0) {
+        console.log(`Found ${bingResults.length} content results from Bing`);
+        
+        // Filter out duplicates before adding to our results array
+        const newResults = bingResults.filter(bingResult => 
+          !allContentResults.some(existingResult => 
+            existingResult.link === bingResult.link
+          )
+        );
+        
+        console.log(`Adding ${newResults.length} unique results from Bing`);
+        allContentResults = [...allContentResults, ...newResults];
+      }
+    } catch (error) {
+      console.error("Error scraping Bing for content:", error);
+    }
+    
+    // If we don't have enough content results, try SerpAPI as a fallback
+    if (allContentResults.length < 20) {
+      try {
+        console.log("Direct scraping yielded insufficient results, using SerpAPI as fallback");
+        const params = {
+          q: directContentQuery,
+          num: 100,
+          engine: "google",
+          gl: "us", // country = US
+          hl: "en", // language = English
+        };
+        
+        const serpResults = await serpapi.getJson(params);
+        
+        if (serpResults && serpResults.organic_results) {
+          const newResults = serpResults.organic_results.filter((serpResult: any) => 
+            !allContentResults.some(existingResult => 
+              existingResult.link === serpResult.link
+            )
           );
           
-        directCompetitors = Array.from(new Set(domains)); // Remove duplicates
-        console.log(`Found ${directCompetitors.length} direct competitors via Google scraping`);
-      }
-      
-      // If Google didn't return enough, try Bing
-      if (directCompetitors.length < 10) {
-        console.log("Not enough Google results, trying Bing for more competitors...");
-        const bingResults = await scrapeBingSearchResults(directCompetitorQuery, 100);
-        
-        if (bingResults.length > 0) {
-          const bingDomains = bingResults
-            .map(result => extractDomain(result.link))
-            .filter(d => !!d && d !== domain && !directCompetitors.includes(d)) // Only add new ones
-            .filter(d => 
-              !d.includes(".co.uk") && 
-              !d.includes(".de") && 
-              !d.includes(".fr") && 
-              !d.includes(".es") && 
-              !d.includes(".ca") && 
-              !d.includes(".au") && 
-              !d.includes(".eu") &&
-              !d.includes(".io") &&
-              !d.includes(".org.uk") &&
-              !d.includes("facebook.com") &&
-              !d.includes("twitter.com") &&
-              !d.includes("instagram.com") &&
-              !d.includes("linkedin.com") &&
-              !d.includes("youtube.com") &&
-              !d.includes("reddit.com") &&
-              !d.includes("wikipedia.org")
-            );
-            
-          directCompetitors = [...directCompetitors, ...bingDomains];
-          directCompetitors = Array.from(new Set(directCompetitors)); // Remove duplicates again
-          console.log(`Added ${bingDomains.length} more competitors from Bing`);
+          console.log(`Adding ${newResults.length} unique results from SerpAPI`);
+          allContentResults = [...allContentResults, ...newResults];
         }
-      }
-    } catch (error) {
-      console.error("Error scraping for competitors:", error);
-    }
-    
-    // Fallback to our standard method if direct scraping failed
-    if (directCompetitors.length < 5) {
-      console.log("Direct competitor scraping yielded insufficient results, using fallback method");
-      // Get actual competitors from our database of industry-specific competitors
-      const competitors = await findCompetitorDomains(domain, 15, keywords);
-      directCompetitors = [...directCompetitors, ...competitors];
-      directCompetitors = Array.from(new Set(directCompetitors)); // Remove duplicates
-    }
-    
-    // Add similar websites from SimilarWeb if available
-    try {
-      const similarWebsites = await getSimilarWebsites(domain);
-      const similarDomains = similarWebsites
-        .map(site => extractDomain(site))
-        .filter((d: unknown): d is string => 
-          !!d && typeof d === 'string' && d !== domain &&
-          !directCompetitors.includes(d) && // Only add domains we don't already have
-          // Filter out non-US domains
-          !d.includes(".co.uk") && 
-          !d.includes(".de") && 
-          !d.includes(".fr") && 
-          !d.includes(".es") && 
-          !d.includes(".ca") && 
-          !d.includes(".au") && 
-          !d.includes(".eu") &&
-          !d.includes(".io") &&
-          !d.includes(".org.uk")
-        );
-      
-      directCompetitors = [...directCompetitors, ...similarDomains];
-      directCompetitors = Array.from(new Set(directCompetitors)); // Remove duplicates
-      console.log(`Added ${similarDomains.length} similar websites from SimilarWeb`);
-    } catch (error) {
-      console.error("Error getting similar websites:", error);
-    }
-    
-    // Combine all competitor domains, ensuring no duplicates - get more competitors
-    const allCompetitorDomains = directCompetitors.slice(0, 20);
-    
-    console.log(`Found ${allCompetitorDomains.length} total competitor domains`);
-    console.log(`Competitor domains: ${allCompetitorDomains.join(', ')}`);
-    
-    // For each competitor domain, use direct scraping to search for content
-    const topContentPromises = allCompetitorDomains.slice(0, 15).map(async (competitorDomain) => {
-      try {
-        console.log(`Fetching content for competitor: ${competitorDomain}`);
-        
-        // Create very specific query to find only relevant content articles/blogs using keywords
-        // Include original website's domain name in search to find related content
-        const contentTypes = "article OR blog OR guide OR tutorial OR resource OR news OR post";
-        const query = keywords 
-          ? `site:${competitorDomain} -inurl:index -inurl:homepage -inurl:contact -inurl:about ${domainName} ${keywords} ${contentTypes}` 
-          : `site:${competitorDomain} -inurl:index -inurl:homepage -inurl:contact -inurl:about ${domainName} ${industryTerm} ${contentTypes}`;
-        
-        // First try direct web scraping from Google
-        let organicResults: any[] = [];
-        
-        try {
-          // Try Google first
-          console.log(`Direct scraping Google for: ${query}`);
-          const googleResults = await scrapeGoogleSearchResults(query, 50);
-          
-          if (googleResults && googleResults.length > 0) {
-            organicResults = googleResults;
-          } else {
-            // If Google fails, try Bing
-            console.log(`No Google results, trying Bing for: ${query}`);
-            const bingResults = await scrapeBingSearchResults(query, 50);
-            
-            if (bingResults && bingResults.length > 0) {
-              organicResults = bingResults;
-            } else {
-              // If both direct scraping methods fail, use SerpAPI
-              console.log(`Direct scraping failed, using SerpAPI as fallback for: ${query}`);
-              
-              const serpResults = await serpapi.getJson({
-                q: query,
-                num: 12,
-                engine: "google",
-                gl: "us", 
-                hl: "en",
-              });
-              
-              if (serpResults && serpResults.organic_results) {
-                organicResults = serpResults.organic_results;
-              }
-            }
-          }
-        } catch (error) {
-          // Log the error but don't return fallback content - let the function continue
-          console.error(`Error with all search methods for ${competitorDomain}: ${error}`);
-          
-          // Return empty array instead of fallback content
-          return [];
-        }
-        
-        // If we get here, we have results to process
-        // Filter out results that appear to be root domains or homepages
-        const filteredResults = organicResults.filter((result: any) => {
-          const url = result.link.toLowerCase();
-          const pathSegments = new URL(url).pathname.split('/').filter(Boolean);
-          
-          // Check if this looks like a blog post, article, or other content page (not root domain)
-          const isContentPage = 
-            // Has path segments (not just domain.com/)
-            pathSegments.length > 0 &&
-            // Not common top-level pages
-            !url.endsWith('/index.html') && 
-            !url.endsWith('/home') &&
-            !url.endsWith('/contact') &&
-            !url.endsWith('/about') &&
-            // Contains content path indicators
-            (url.includes('/blog/') || 
-             url.includes('/article/') || 
-             url.includes('/news/') ||
-             url.includes('/resources/') ||
-             url.includes('/guide/') ||
-             url.includes('/post/') ||
-             url.includes('/insights/') ||
-             // If none of above, at least has 2+ path segments (likely content)
-             pathSegments.length >= 2);
-          
-          return isContentPage;
-        });
-          
-        // Slice to get more results after filtering
-        const combinedResults = filteredResults.slice(0, 8);
-        
-        if (combinedResults.length > 0) {
-          return combinedResults.map((result: any) => ({
-            domain: competitorDomain,
-            result
-          }));
-        }
-        
-        return [];
       } catch (error) {
-        console.error(`Error finding top content for ${competitorDomain}:`, error);
-        return [];
+        console.error("Error with SerpAPI fallback:", error);
+      }
+    }
+    
+    console.log(`Found total of ${allContentResults.length} content results across all sources`);
+    
+    // Filter results to only include blog posts, articles, and real content pages
+    const filteredResults = allContentResults.filter(result => {
+      try {
+        const url = result.link.toLowerCase();
+        
+        // Skip results from the original domain
+        if (url.includes(domain.toLowerCase())) return false;
+        
+        // Skip social media platforms
+        if (url.includes("facebook.com") ||
+            url.includes("twitter.com") ||
+            url.includes("instagram.com") ||
+            url.includes("linkedin.com") ||
+            url.includes("youtube.com") ||
+            url.includes("reddit.com") ||
+            url.includes("pinterest.com")) {
+          return false;
+        }
+        
+        // Skip search engine results pages
+        if (url.includes("google.com/search") ||
+            url.includes("bing.com/search")) {
+          return false;
+        }
+        
+        // Skip pages with no path segments
+        const pathSegments = new URL(url).pathname.split('/').filter(Boolean);
+        if (pathSegments.length === 0) return false;
+        
+        // Include if it has content indicators in the path
+        return (
+          url.includes("/blog/") || 
+          url.includes("/article/") || 
+          url.includes("/news/") ||
+          url.includes("/resources/") ||
+          url.includes("/guide/") ||
+          url.includes("/post/") ||
+          pathSegments.length >= 2 // Likely a content page with depth
+        );
+      } catch (e) {
+        // Skip any URLs that cause parsing errors
+        return false;
       }
     });
     
-    const topContentArrays = await Promise.all(topContentPromises);
-    const allTopContent = topContentArrays.flat();
+    console.log(`Filtered down to ${filteredResults.length} high-quality content results`);
+    
+    // Extract unique competitor domains from these filtered results
+    const contentDomains = filteredResults
+      .map(result => extractDomain(result.link))
+      .filter((d: unknown): d is string => 
+        !!d && typeof d === 'string' && d !== domain &&
+        // Filter non-US domains
+        !d.includes(".co.uk") && 
+        !d.includes(".de") && 
+        !d.includes(".fr") && 
+        !d.includes(".es") && 
+        !d.includes(".ca") && 
+        !d.includes(".au") && 
+        !d.includes(".eu") &&
+        !d.includes(".io") &&
+        !d.includes(".org.uk")
+      );
+    
+    const uniqueContentDomains = Array.from(new Set(contentDomains));
+    console.log(`Found content from ${uniqueContentDomains.length} competitor domains`);
+    
+    // Group results by domain for better organization
+    const resultsByDomain: Record<string, any[]> = {};
+    
+    filteredResults.forEach(result => {
+      const resultDomain = extractDomain(result.link);
+      if (!resultDomain || resultDomain === domain) return;
+      
+      if (!resultsByDomain[resultDomain]) {
+        resultsByDomain[resultDomain] = [];
+      }
+      
+      resultsByDomain[resultDomain].push(result);
+    });
+    
+    // Convert grouped results back to our expected format for processing
+    const allTopContent: {domain: string, result: any}[] = [];
+    
+    Object.entries(resultsByDomain).forEach(([domain, results]) => {
+      // Take up to 8 results per domain
+      results.slice(0, 8).forEach(result => {
+        allTopContent.push({
+          domain,
+          result
+        });
+      });
+    });
     
     console.log(`Found ${allTopContent.length} pieces of competitor content`);
     
@@ -780,7 +733,7 @@ export const processCompetitorContent = async (
         // Try to scrape content
         let text = "";
         let title = "";
-        let keywords = [];
+        let keywords: string[] = [];
         
         try {
           const scraped = await scrapePageContent(result.link);
