@@ -48,7 +48,8 @@ export default function Home() {
         <div className="space-y-8">
           <ResultsPanel 
             analyzedUrl={analyzedUrl}
-            results={analysisResult.competitorContent} 
+            results={analysisResult.competitorContent}
+            fullResults={analysisResult}
           />
           
           <InsightsSummary 

@@ -1,15 +1,17 @@
-import { CompetitorContent } from "@/lib/types";
+import { AnalysisResult, CompetitorContent } from "@/lib/types";
 import CompetitorContentItem from "./CompetitorContentItem";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Award, BookOpen, Search } from "lucide-react";
+import ExportButtons from "./ExportButtons";
 
 interface ResultsPanelProps {
   analyzedUrl: string;
   results: CompetitorContent[];
+  fullResults?: AnalysisResult;
 }
 
-export default function ResultsPanel({ analyzedUrl, results }: ResultsPanelProps) {
+export default function ResultsPanel({ analyzedUrl, results, fullResults }: ResultsPanelProps) {
   // Group results by domain
   const domainGroups = results.reduce((groups, result) => {
     const domain = result.domain;
@@ -23,9 +25,14 @@ export default function ResultsPanel({ analyzedUrl, results }: ResultsPanelProps
   return (
     <Card className="w-full">
       <CardHeader>
-        <div className="flex items-center space-x-2">
-          <Award className="h-5 w-5 text-primary" />
-          <CardTitle>Top Competitor Content</CardTitle>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <Award className="h-5 w-5 text-primary" />
+            <CardTitle>Top Competitor Content</CardTitle>
+          </div>
+          {fullResults && (
+            <ExportButtons results={fullResults} />
+          )}
         </div>
         <CardDescription>
           Top-performing content from competitors to {analyzedUrl.replace(/^https?:\/\//, '')}
