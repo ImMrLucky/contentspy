@@ -90,39 +90,121 @@ export const getSimilarWebsites = async (domain: string): Promise<string[]> => {
   }
 };
 
+// Find top competitor domains (not just search results)
+export const findCompetitorDomains = async (domain: string, limit = 10): Promise<string[]> => {
+  try {
+    console.log(`Finding direct competitors for domain: ${domain}`);
+    
+    // More specific search queries to find real competitors, not just mentions
+    const competitorQueries = [
+      `competitors of ${domain}`,
+      `${domain} competitors`,
+      `alternatives to ${domain}`,
+      `companies like ${domain}`,
+      `${extractIndustryFromDomain(domain)} top companies`,
+    ];
+    
+    // Run multiple searches to find competitors
+    const searchPromises = competitorQueries.map(async (query) => {
+      try {
+        const params = {
+          q: query,
+          num: 10,
+          engine: "google",
+        };
+        
+        const results = await serpapi.getJson(params);
+        return results.organic_results || [];
+      } catch (error) {
+        console.error(`Error searching for query "${query}":`, error);
+        return [];
+      }
+    });
+    
+    const searchResultsArrays = await Promise.all(searchPromises);
+    const allSearchResults = searchResultsArrays.flat();
+    
+    // Extract domains from results
+    const competitorDomains = allSearchResults
+      .map((result: any) => extractDomain(result.link))
+      .filter((d): d is string => !!d && d !== domain) // Filter out null/undefined and the original domain
+      .filter((d) => !d.includes("wikipedia.org") && 
+                   !d.includes("youtube.com") &&
+                   !d.includes("linkedin.com") &&
+                   !d.includes("facebook.com") &&
+                   !d.includes("twitter.com") &&
+                   !d.includes("instagram.com") &&
+                   !d.includes("reddit.com") &&
+                   !d.includes("quora.com") &&
+                   !d.includes("google.com"));
+    
+    // Get unique domains
+    const uniqueDomains = Array.from(new Set(competitorDomains));
+    
+    // Filter out domains that might be in the same industry
+    const filteredDomains = uniqueDomains
+      .filter(d => !d.includes("github.com") && !d.includes("medium.com"))
+      .slice(0, limit);
+    
+    console.log(`Found ${filteredDomains.length} competitor domains for ${domain}`);
+    return filteredDomains;
+  } catch (error) {
+    console.error(`Error finding competitor domains for ${domain}:`, error);
+    return [];
+  }
+};
+
 // Get search results from SerpAPI
 export const getSearchResults = async (domain: string, limit = 10): Promise<any[]> => {
   try {
-    // Create a search for competing websites in the same niche
+    // Create a search for organic results from this domain
     const params = {
-      q: `related:${domain} OR competitors of ${domain} OR similar sites to ${domain} OR alternative to ${domain}`,
-      num: limit * 2, // Get more results to filter down
+      q: `site:${domain}`,
+      num: limit,
       engine: "google",
     };
     
     const results = await serpapi.getJson(params);
     
     if (results.organic_results) {
-      // Filter out own domain and duplicates
-      const filteredResults = results.organic_results.filter((result: any) => {
-        const resultDomain = extractDomain(result.link);
-        return resultDomain && resultDomain !== domain;
-      });
-      
-      // Get unique domains first
-      const uniqueDomainResults = Array.from(
-        new Map(
-          filteredResults.map((item: any) => [extractDomain(item.link), item])
-        ).values()
-      );
-      
-      return uniqueDomainResults.slice(0, limit);
+      return results.organic_results.slice(0, limit);
     }
     
     return [];
   } catch (error) {
     console.error(`Error getting search results for ${domain}:`, error);
     return [];
+  }
+};
+
+// Try to determine industry from domain name
+export const extractIndustryFromDomain = (domain: string): string => {
+  // Remove TLD and www
+  const domainName = domain.replace(/^www\./i, '').split('.')[0];
+  
+  // Extract potential industry indicators from domain name
+  if (domainName.includes('tech') || domainName.includes('soft') || domainName.includes('app') || 
+      domainName.includes('code') || domainName.includes('dev') || domainName.includes('cloud') ||
+      domainName.includes('data')) {
+    return 'technology';
+  } else if (domainName.includes('shop') || domainName.includes('store') || domainName.includes('buy') ||
+             domainName.includes('retail') || domainName.includes('market')) {
+    return 'retail';
+  } else if (domainName.includes('health') || domainName.includes('med') || domainName.includes('care') ||
+             domainName.includes('clinic') || domainName.includes('doctor') || domainName.includes('hospital')) {
+    return 'healthcare';
+  } else if (domainName.includes('food') || domainName.includes('restaurant') || domainName.includes('eat') ||
+             domainName.includes('kitchen') || domainName.includes('meal') || domainName.includes('chef')) {
+    return 'food';
+  } else if (domainName.includes('travel') || domainName.includes('tour') || domainName.includes('trip') ||
+             domainName.includes('holiday') || domainName.includes('vacation')) {
+    return 'travel';
+  } else if (domainName.includes('finance') || domainName.includes('bank') || domainName.includes('invest') ||
+             domainName.includes('money') || domainName.includes('capital')) {
+    return 'finance';
+  } else {
+    // Default to a generic industry query
+    return domainName;
   }
 };
 
@@ -134,34 +216,59 @@ export const processCompetitorContent = async (
   try {
     console.log(`Finding competitor websites for ${domain}...`);
     
-    // Get similar websites - first through SimilarWeb API
+    // Get actual competitors (not just search results)
+    const competitors = await findCompetitorDomains(domain, 15);
+    
+    // Add similar websites from SimilarWeb if available
     const similarWebsites = await getSimilarWebsites(domain);
+    const similarDomains = similarWebsites
+      .map(site => extractDomain(site))
+      .filter((d): d is string => !!d && d !== domain);
     
-    // Get competitor websites through search results
-    const competitorResults = await getSearchResults(domain, 10);
-    const competitorDomains = competitorResults.map(result => extractDomain(result.link))
-      .filter(d => d && d !== domain);
+    // Combine all competitor domains, ensuring no duplicates
+    const allCompetitorDomains = Array.from(new Set([...competitors, ...similarDomains])).slice(0, 15);
     
-    console.log(`Found ${competitorDomains.length} competitor domains`);
+    console.log(`Found ${allCompetitorDomains.length} total competitor domains`);
+    console.log(`Competitor domains: ${allCompetitorDomains.join(', ')}`);
     
     // For each competitor domain, find their top content
-    const topContentPromises = competitorDomains.map(async (competitorDomain) => {
+    const topContentPromises = allCompetitorDomains.map(async (competitorDomain) => {
       try {
         // Search for the most popular content from this competitor
-        const contentSearchParams = {
-          q: `site:${competitorDomain} best OR popular OR top`,
-          num: 5,
+        // First, try to find their top-performing content
+        const topContentParams = {
+          q: `site:${competitorDomain} intitle:best OR intitle:top OR intitle:guide OR intitle:how`,
+          num: 3,
           engine: "google",
+          gl: "us", // country = US
         };
         
-        const contentResults = await serpapi.getJson(contentSearchParams);
+        // Then, look for their popular product/service pages
+        const popularPagesParams = {
+          q: `site:${competitorDomain}`,
+          num: 2,
+          engine: "google",
+          gl: "us", // country = US
+        };
         
-        if (contentResults.organic_results && contentResults.organic_results.length > 0) {
-          return contentResults.organic_results.map((result: any) => ({
+        // Run searches in parallel
+        const [topContentResults, popularPagesResults] = await Promise.all([
+          serpapi.getJson(topContentParams),
+          serpapi.getJson(popularPagesParams)
+        ]);
+        
+        // Combine results from both searches
+        const topResults = (topContentResults.organic_results || []).slice(0, 3);
+        const popularResults = (popularPagesResults.organic_results || []).slice(0, 2);
+        const combinedResults = [...topResults, ...popularResults];
+        
+        if (combinedResults.length > 0) {
+          return combinedResults.map((result: any) => ({
             domain: competitorDomain,
             result
           }));
         }
+        
         return [];
       } catch (error) {
         console.error(`Error finding top content for ${competitorDomain}:`, error);
@@ -182,9 +289,23 @@ export const processCompetitorContent = async (
           return null;
         }
         
-        // Scrape content and extract keywords
-        const { text, title } = await scrapePageContent(result.link);
-        const keywords = extractKeywords(text || result.snippet || '', 5);
+        // Try to scrape content
+        let text = "";
+        let title = "";
+        let keywords = [];
+        
+        try {
+          const scraped = await scrapePageContent(result.link);
+          text = scraped.text;
+          title = scraped.title;
+          keywords = extractKeywords(text || result.snippet || '', 5);
+        } catch (error) {
+          console.error(`Error scraping ${result.link}:`, error);
+          // If scraping fails, still use the SERP data
+          text = result.snippet || "";
+          title = result.title || "";
+          keywords = extractKeywords(text, 5);
+        }
         
         // Generate realistic monthly visit estimates
         const visitRanges = [
@@ -212,7 +333,7 @@ export const processCompetitorContent = async (
           url: result.link,
           domain: competitorDomain,
           publishDate: result.date || "Recent",
-          description: result.snippet || text.substring(0, 150) + "...",
+          description: result.snippet || (text ? text.substring(0, 150) + "..." : ""),
           trafficLevel,
           keywords
         };
