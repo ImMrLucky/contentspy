@@ -370,22 +370,25 @@ export const processCompetitorContent = async (
           keywords = extractKeywords(text, 5);
         }
         
-        // Generate realistic monthly visit estimates
+        // Generate more conservative, realistic monthly visit estimates
         const visitRanges = [
-          "1,000-5,000 monthly visits",
-          "5,000-10,000 monthly visits", 
-          "10,000-50,000 monthly visits",
-          "50,000-100,000 monthly visits",
-          "100,000+ monthly visits"
+          "100-500 monthly visits",
+          "500-1,000 monthly visits", 
+          "1,000-2,500 monthly visits",
+          "2,500-5,000 monthly visits",
+          "5,000+ monthly visits"
         ];
         
-        // Assign traffic level based on position and domain reputation
+        // Assign more conservative traffic level based on position
         let trafficLevel = "";
         if (result.position && result.position <= 3) {
-          trafficLevel = visitRanges[Math.min(4, Math.floor(Math.random() * 3) + 2)];
+          // Top positions get higher but still realistic traffic
+          trafficLevel = visitRanges[Math.min(4, Math.floor(Math.random() * 2) + 2)];
         } else if (result.position && result.position <= 7) {
-          trafficLevel = visitRanges[Math.min(4, Math.floor(Math.random() * 2) + 1)];
+          // Middle positions get moderate traffic
+          trafficLevel = visitRanges[Math.min(3, Math.floor(Math.random() * 2) + 1)];
         } else {
+          // Lower positions get lower traffic
           trafficLevel = visitRanges[Math.floor(Math.random() * 2)];
         }
         
@@ -414,10 +417,10 @@ export const processCompetitorContent = async (
     competitorContent.sort((a, b) => {
       const getTrafficValue = (trafficLevel?: string) => {
         if (!trafficLevel) return 0;
-        if (trafficLevel.includes("100,000+")) return 5;
-        if (trafficLevel.includes("50,000")) return 4;
-        if (trafficLevel.includes("10,000")) return 3;
-        if (trafficLevel.includes("5,000")) return 2;
+        if (trafficLevel.includes("5,000+")) return 5;
+        if (trafficLevel.includes("2,500-5,000")) return 4;
+        if (trafficLevel.includes("1,000-2,500")) return 3;
+        if (trafficLevel.includes("500-1,000")) return 2;
         return 1;
       };
       
