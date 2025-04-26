@@ -350,13 +350,14 @@ export const processCompetitorContent = async (
       try {
         console.log(`Fetching content for competitor: ${competitorDomain}`);
         
-        // Updated query to look for content like articles and blogs, not just domain root
-        const contentTypes = "article OR blog OR guide OR resource OR news";
+        // Enhanced query to find only article/blog content and exclude root domain pages
+        const contentTypes = "article OR blog OR guide OR tutorial OR resource OR news";
+        const contentPaths = "blog OR article OR resource OR guide OR news OR post OR case-study";
         const params = {
           q: keywords 
-            ? `site:${competitorDomain} (${keywords}) (${contentTypes})` 
-            : `site:${competitorDomain} (${contentTypes})`,
-          num: 5,
+            ? `site:${competitorDomain} -inurl:index -inurl:homepage ${contentPaths} (${keywords}) (${contentTypes})` 
+            : `site:${competitorDomain} -inurl:index -inurl:homepage ${contentPaths} (${contentTypes})`,
+          num: 8, // Get more results to filter through
           engine: "google",
           gl: "us", // country = US
           hl: "en", // language = English
@@ -390,9 +391,39 @@ export const processCompetitorContent = async (
           }];
         }
         
-        // Process search results
+        // Process search results and filter out root domains and homepage-like content
         const organicResults = results?.organic_results || [];
-        const combinedResults = organicResults.slice(0, 5);
+        
+        // Filter out results that appear to be root domains or homepages
+        const filteredResults = organicResults.filter((result: any) => {
+          const url = result.link.toLowerCase();
+          const pathSegments = new URL(url).pathname.split('/').filter(Boolean);
+          
+          // Check if this looks like a blog post, article, or other content page (not root domain)
+          const isContentPage = 
+            // Has path segments (not just domain.com/)
+            pathSegments.length > 0 &&
+            // Not common top-level pages
+            !url.endsWith('/index.html') && 
+            !url.endsWith('/home') &&
+            !url.endsWith('/contact') &&
+            !url.endsWith('/about') &&
+            // Contains content path indicators
+            (url.includes('/blog/') || 
+             url.includes('/article/') || 
+             url.includes('/news/') ||
+             url.includes('/resources/') ||
+             url.includes('/guide/') ||
+             url.includes('/post/') ||
+             url.includes('/insights/') ||
+             // If none of above, at least has 2+ path segments (likely content)
+             pathSegments.length >= 2);
+          
+          return isContentPage;
+        });
+          
+        // Slice to get top 5 after filtering
+        const combinedResults = filteredResults.slice(0, 5);
         
         if (combinedResults.length > 0) {
           return combinedResults.map((result: any) => ({
@@ -450,8 +481,8 @@ export const processCompetitorContent = async (
           "20,000+ monthly visits"
         ];
         
-        // More deterministic traffic estimates based on multiple factors
-        const estimateTrafficLevel = (domainName: string, position: number = 10): string => {
+        // Enhanced traffic estimation logic with content type consideration
+        const estimateTrafficLevel = (domainName: string, position: number = 10, url: string, title: string): string => {
           // Start with base domain popularity factor
           let domainPopularity = 0;
           
@@ -473,21 +504,50 @@ export const processCompetitorContent = async (
           // Consider position factor (higher = better)
           const positionFactor = Math.max(0, 10 - position);
           
-          // Calculate combined score
-          const score = domainPopularity + positionFactor;
+          // Analyze content pattern to determine popularity potential
+          let contentFactor = 0;
+          const contentPatterns = [
+            { regex: /how\s+to|tutorial|guide|step[\s-]by[\s-]step/i, value: 3 }, // How-to content gets more traffic
+            { regex: /\d+\s+(?:ways|tips|tricks|ideas|examples|reasons)/i, value: 3 }, // List posts are popular
+            { regex: /best|top\s+\d+|ultimate|complete/i, value: 2 }, // Superlative content
+            { regex: /vs\.?|versus|comparison|alternative/i, value: 2 }, // Comparison content
+            { regex: /review|overview|analysis/i, value: 1 }, // Review content
+            { regex: /case\s+study|success\s+story/i, value: 1 } // Case studies
+          ];
           
-          // Map score to traffic ranges
-          if (score >= 14) return visitRanges[6]; // 20,000+
+          // Check both URL and title for content patterns
+          const checkText = (url + ' ' + title).toLowerCase();
+          for (const pattern of contentPatterns) {
+            if (pattern.regex.test(checkText)) {
+              contentFactor = Math.max(contentFactor, pattern.value);
+            }
+          }
+          
+          // Check if this appears to be a comprehensive resource (which gets more traffic)
+          if (url.includes('/blog/') || url.includes('/articles/')) {
+            contentFactor += 1;
+          }
+          
+          // Calculate combined score
+          const score = domainPopularity + positionFactor + contentFactor;
+          
+          // Map score to traffic ranges with higher fidelity
+          if (score >= 15) return visitRanges[6]; // 20,000+
           if (score >= 12) return visitRanges[5]; // 10,000-20,000
-          if (score >= 10) return visitRanges[4]; // 5,000-10,000
-          if (score >= 8) return visitRanges[3];  // 2,000-5,000
-          if (score >= 6) return visitRanges[2];  // 1,000-2,000
-          if (score >= 4) return visitRanges[1];  // 500-1,000
+          if (score >= 9) return visitRanges[4]; // 5,000-10,000
+          if (score >= 7) return visitRanges[3];  // 2,000-5,000
+          if (score >= 5) return visitRanges[2];  // 1,000-2,000
+          if (score >= 3) return visitRanges[1];  // 500-1,000
           return visitRanges[0]; // Under 500
         };
         
-        // Get traffic level using the new estimation function
-        const trafficLevel = estimateTrafficLevel(competitorDomain, result.position || 10);
+        // Get traffic level using the new enhanced estimation function with content factors
+        const trafficLevel = estimateTrafficLevel(
+          competitorDomain, 
+          result.position || 10, 
+          result.link, 
+          title || result.title || ''
+        );
         
         // Create competitor content object
         return {
