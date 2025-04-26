@@ -5,12 +5,18 @@ import natural from 'natural';
 import { CompetitorContent } from '@shared/schema';
 import { URL } from 'url';
 
-// API Keys
-const SERP_API_KEY = 'ca0472a6aca733869577b72e6d4773dc30f32f25f09433771a87b8871bf52f97';
-const SIMILARWEB_API_KEY = '05dbc8d629d24585947c0c0d4c521114';
+// API Keys - Use environment variables
+const SERP_API_KEY = process.env.SERPAPI_KEY || 'ca0472a6aca733869577b72e6d4773dc30f32f25f09433771a87b8871bf52f97';
+const SIMILARWEB_API_KEY = process.env.SIMILARWEB_API_KEY || '05dbc8d629d24585947c0c0d4c521114';
 
 // Configure serpapi with API key
 serpapi.config.api_key = SERP_API_KEY;
+
+// Helper function for adding random delays between requests to avoid rate limits
+const randomDelay = async (min = 1000, max = 3000) => {
+  const delay = Math.floor(Math.random() * (max - min + 1)) + min;
+  return new Promise(resolve => setTimeout(resolve, delay));
+};
 
 // User agents for browser emulation
 const USER_AGENTS = [
@@ -275,87 +281,215 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
     // We need to make multiple requests to get 200 results (Google shows 100 max per page)
     const allResults: any[] = [];
     
-    for (let page = 0; page < 2; page++) {
-      // Format query for URL
-      const formattedQuery = encodeURIComponent(query);
-      const start = page * 100;
-      const url = `https://www.google.com/search?q=${formattedQuery}&num=100&start=${start}&filter=0`;
-      
-      // Make request with random user agent
-      const response = await axios.get(url, {
-        headers: {
-          'User-Agent': getRandomUserAgent(),
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.5',
-          'Accept-Encoding': 'gzip, deflate, br',
-          'Connection': 'keep-alive',
-          'Upgrade-Insecure-Requests': '1',
-          'Cache-Control': 'max-age=0'
-        },
-        timeout: 15000 // 15 second timeout
-      });
-      
-      // Load HTML with Cheerio
-      const $ = cheerio.load(response.data);
-      
-      // Select all search result divs - try multiple selector patterns for better coverage
-      $('.g, .Gx5Zad, .tF2Cxc, .yuRUbf').each((i, el) => {
-        // Only collect up to limit results
-        if (allResults.length >= limit) return false;
-        
-        let titleEl, linkEl, snippetEl;
-        
-        // Try different selector patterns based on Google's current layout
-        titleEl = $(el).find('h3, .DKV0Md');
-        linkEl = $(el).find('a[href^="http"], .yuRUbf a');
-        snippetEl = $(el).find('.VwiC3b, .lEBKkf, .s3v9rd');
-        
-        // Only include if we found title and link
-        if (titleEl.length && linkEl.length) {
-          const title = titleEl.text().trim();
-          // Get proper href attribute - Google sometimes redirects, get the actual URL
-          const linkHref = linkEl.attr('href') || '';
-          let link = linkHref;
+    // Try multiple Google scraping approaches - we'll rotate between them for reliability
+    // We only need to try up to 4 pages total (2 pages each from different approaches)
+    const scrapingMethods = [
+      // Method 1: Standard approach - Google.com
+      async (page: number) => {
+        try {
+          await randomDelay(2000, 3000); // Add a longer delay to avoid rate limiting
+          const formattedQuery = encodeURIComponent(query);
+          const start = page * 100;
+          const url = `https://www.google.com/search?q=${formattedQuery}&num=100&start=${start}&filter=0`;
           
-          // Extract the actual URL if it's a Google redirect
-          if (linkHref.includes('/url?')) {
-            try {
-              const urlObj = new URL(linkHref);
-              const actualUrl = urlObj.searchParams.get('q') || urlObj.searchParams.get('url');
-              if (actualUrl) link = actualUrl;
-            } catch (e) {
-              // Just use the original if we can't parse it
-            }
+          // Add a cache-busting parameter to avoid cached results
+          const cacheBuster = new Date().getTime();
+          const finalUrl = `${url}&cb=${cacheBuster}`;
+          
+          const response = await axios.get(finalUrl, {
+            headers: {
+              'User-Agent': getRandomUserAgent(),
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+              'Accept-Language': 'en-US,en;q=0.5',
+              'Accept-Encoding': 'gzip, deflate, br',
+              'Connection': 'keep-alive',
+              'Upgrade-Insecure-Requests': '1',
+              'Cache-Control': 'no-cache',
+              'Pragma': 'no-cache'
+            },
+            timeout: 20000, // 20 second timeout
+            validateStatus: (status) => status < 500 // Accept any status < 500 
+          });
+          
+          if (response.status === 429 || response.status === 403) {
+            console.log(`Rate limit hit (${response.status}) - trying alternative method`);
+            return false;
           }
           
-          const snippet = snippetEl.text().trim();
+          // Load HTML with Cheerio
+          const $ = cheerio.load(response.data);
+          let resultsFound = 0;
           
-          // Skip if link doesn't start with http or if it's empty
-          if (!link || !link.startsWith('http')) return;
-          
-          // Skip if title or link is empty
-          if (!title || !link) return;
-          
-          // Avoid duplicate results
-          if (allResults.some(result => result.link === link)) return;
-          
-          allResults.push({
-            title,
-            link,
-            snippet,
-            position: allResults.length + 1
+          // Try multiple selector patterns for different Google layouts
+          $('.g, .Gx5Zad, .tF2Cxc, .yuRUbf, .MjjYud, .kvH3mc').each((i, el) => {
+            if (allResults.length >= limit) return false;
+            
+            // Try different selector patterns based on Google's current layout
+            const titleEl = $(el).find('h3, .DKV0Md, .LC20lb');
+            const linkEl = $(el).find('a[href^="http"], .yuRUbf a, a.l');
+            const snippetEl = $(el).find('.VwiC3b, .lEBKkf, .s3v9rd, .st');
+            
+            // Only include if we found title and link
+            if (titleEl.length && linkEl.length) {
+              const title = titleEl.text().trim();
+              // Get proper href attribute - Google sometimes redirects, get the actual URL
+              const linkHref = linkEl.attr('href') || '';
+              let link = linkHref;
+              
+              // Extract the actual URL if it's a Google redirect
+              if (linkHref.includes('/url?')) {
+                try {
+                  const urlObj = new URL(linkHref);
+                  const actualUrl = urlObj.searchParams.get('q') || urlObj.searchParams.get('url');
+                  if (actualUrl) link = actualUrl;
+                } catch (e) {
+                  // Just use the original if we can't parse it
+                }
+              }
+              
+              const snippet = snippetEl.text().trim();
+              
+              // Skip if link doesn't start with http or if it's empty
+              if (!link || !link.startsWith('http')) return;
+              
+              // Skip if title or link is empty
+              if (!title || !link) return;
+              
+              // Avoid duplicate results
+              if (allResults.some(result => result.link === link)) return;
+              
+              allResults.push({
+                title,
+                link,
+                snippet,
+                position: allResults.length + 1
+              });
+              
+              resultsFound++;
+            }
           });
+          
+          return resultsFound > 0;
+        } catch (error) {
+          console.error(`Method 1 error for page ${page}: ${error}`);
+          return false;
         }
-      });
+      },
       
-      // Wait a short delay before next request to avoid rate limiting
-      if (page < 1) await new Promise(r => setTimeout(r, 2000));
+      // Method 2: Google search with different parameters and selectors
+      async (page: number) => {
+        try {
+          await randomDelay(1500, 3500); // Different delay pattern
+          const formattedQuery = encodeURIComponent(query);
+          const start = page * 10; // Different pagination strategy
+          const url = `https://www.google.com/search?q=${formattedQuery}&start=${start}&ie=utf-8&oe=utf-8&pws=0`;
+          
+          const response = await axios.get(url, {
+            headers: {
+              'User-Agent': getRandomUserAgent(),
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+              'Accept-Language': 'en-US,en;q=0.9',
+              'Connection': 'keep-alive',
+              'Referer': 'https://www.google.com/',
+              'Upgrade-Insecure-Requests': '1'
+            },
+            timeout: 20000
+          });
+          
+          if (response.status === 429 || response.status === 403) {
+            console.log(`Rate limit hit (${response.status}) - trying alternative method`);
+            return false;
+          }
+          
+          const $ = cheerio.load(response.data);
+          let resultsFound = 0;
+          
+          // Different selector approach
+          $('div.g, div[data-hveid], .rc, .yuRUbf').each((i, el) => {
+            if (allResults.length >= limit) return false;
+            
+            // Method 2 uses different selectors
+            const titleEl = $(el).find('h3, .LC20lb');
+            const linkEl = $(el).find('a[href^="http"], a.l, cite.iUh30');
+            const snippetEl = $(el).find('.st, .aCOpRe, .IsZvec');
+            
+            if (titleEl.length && linkEl.length) {
+              const title = titleEl.text().trim();
+              let link = linkEl.attr('href') || '';
+              
+              if (link.startsWith('/url?')) {
+                try {
+                  const urlObj = new URL(`https://www.google.com${link}`);
+                  link = urlObj.searchParams.get('q') || link;
+                } catch (e) {
+                  // Use original link
+                }
+              } else if (!link.startsWith('http')) {
+                // Sometimes Google shows cite with just the domain
+                if (linkEl.is('cite')) {
+                  link = `https://${link}`;
+                }
+              }
+              
+              const snippet = snippetEl.text().trim();
+              
+              // Skip if link doesn't start with http or if it's empty
+              if (!link || !link.startsWith('http')) return;
+              
+              // Skip if title or link is empty
+              if (!title || !link) return;
+              
+              // Avoid duplicate results
+              if (allResults.some(result => result.link === link)) return;
+              
+              allResults.push({
+                title,
+                link,
+                snippet,
+                position: allResults.length + 1
+              });
+              
+              resultsFound++;
+            }
+          });
+          
+          return resultsFound > 0;
+        } catch (error) {
+          console.error(`Method 2 error for page ${page}: ${error}`);
+          return false;
+        }
+      }
+    ];
+    
+    // Try to get results using multiple methods and pages
+    let methodIndex = 0;
+    let totalPages = 0;
+    let success = false;
+    
+    while (allResults.length < limit && totalPages < 8) {
+      const method = scrapingMethods[methodIndex % scrapingMethods.length];
+      const page = Math.floor(totalPages / 2); // Each method gets consecutive page numbers
+      
+      console.log(`Trying scraping method ${methodIndex % scrapingMethods.length + 1}, page ${page + 1}`);
+      success = await method(page);
+      
+      // Rotate methods whether successful or not
+      methodIndex++;
+      totalPages++;
+      
+      // If we've tried both methods at least twice and have some results, exit early
+      if (totalPages >= 4 && allResults.length > 0) {
+        break;
+      }
+      
+      // Brief pause between requests
+      await randomDelay(1000, 3000);
     }
     
-    console.log(`Scraped ${allResults.length} Google results for "${query}"`);
+    console.log(`Scraped ${allResults.length} Google results for "${query}" after ${totalPages} page attempts`);
     return allResults;
   } catch (error) {
-    console.error(`Error scraping Google search results: ${error}`);
+    console.error(`Error in Google scraping coordinator: ${error}`);
     return [];
   }
 };
@@ -545,54 +679,92 @@ export const processCompetitorContent = async (
     // across the entire web that matches the user's domain and keywords
     
     // Build a direct content query to find articles and blogs related to the input
-    let directContentQuery = "";
+    // Create multiple variations of search queries for better results
+    const searchQueries = [];
     
+    // Build direct content search queries with multiple variations
     if (keywords) {
-      // If user provided keywords, use them as the primary search focus
-      directContentQuery = `"${keywords}" -site:${domain} inurl:blog OR inurl:article OR inurl:guide OR inurl:resource`;
+      // Primary query - focused on keywords
+      searchQueries.push(`"${keywords}" -site:${domain} inurl:blog OR inurl:article`);
+      
+      // Secondary query - focused on domain name + keywords
+      searchQueries.push(`${domainName} ${keywords} -site:${domain} inurl:blog OR inurl:article OR inurl:resource`);
+      
+      // Industry-specific query
+      searchQueries.push(`${industryTerm} ${keywords} -site:${domain} inurl:blog OR inurl:guide`);
     } else {
-      // Otherwise search for industry-specific content related to the domain
-      directContentQuery = `"${industryTerm}" -site:${domain} inurl:blog OR inurl:article OR inurl:guide OR inurl:resource`;
+      // Default to industry-focused queries when no keywords provided
+      searchQueries.push(`"${industryTerm}" -site:${domain} inurl:blog OR inurl:article`);
+      searchQueries.push(`${domainName} industry trends -site:${domain} inurl:blog OR inurl:article`);
+      searchQueries.push(`${domainName} best practices -site:${domain} inurl:guide OR inurl:resource`);
     }
+    
+    // Select the primary query for logs but we'll try all of them
+    const directContentQuery = searchQueries[0];
     
     console.log(`Searching for relevant content with query: "${directContentQuery}"`);
     
     // Array to store all content results from various search methods
     let allContentResults: any[] = [];
     
-    // 1. DIRECT GOOGLE SCRAPING - This is our primary source
-    try {
-      console.log("Scraping Google for relevant content articles...");
-      const googleResults = await scrapeGoogleSearchResults(directContentQuery, 200);
+    // Try each query with Google first
+    for (const query of searchQueries) {
+      if (allContentResults.length >= 150) break; // Stop if we already have enough results
       
-      if (googleResults.length > 0) {
-        console.log(`Found ${googleResults.length} content results from Google`);
-        allContentResults = [...allContentResults, ...googleResults];
+      try {
+        console.log(`Scraping Google for query: "${query}"`);
+        const googleResults = await scrapeGoogleSearchResults(query, 100); // Reduced limit per query
+        
+        if (googleResults.length > 0) {
+          console.log(`Found ${googleResults.length} content results from Google for query "${query}"`);
+          
+          // Filter out duplicates before adding
+          const newResults = googleResults.filter(result => 
+            !allContentResults.some(existingResult => 
+              existingResult.link === result.link
+            )
+          );
+          
+          console.log(`Adding ${newResults.length} unique Google results`);
+          allContentResults = [...allContentResults, ...newResults];
+          
+          // Add a short delay between queries
+          await randomDelay(1000, 2000);
+        }
+      } catch (error) {
+        console.error(`Error scraping Google for query "${query}":`, error);
       }
-    } catch (error) {
-      console.error("Error scraping Google for content:", error);
     }
     
-    // 2. DIRECT BING SCRAPING - Additional source for more content
-    try {
-      console.log("Scraping Bing for relevant content articles...");
-      const bingResults = await scrapeBingSearchResults(directContentQuery, 200);
-      
-      if (bingResults.length > 0) {
-        console.log(`Found ${bingResults.length} content results from Bing`);
+    // If we don't have enough results, try Bing queries
+    if (allContentResults.length < 80) {
+      for (const query of searchQueries) {
+        if (allContentResults.length >= 150) break; // Stop if we have enough results
         
-        // Filter out duplicates before adding to our results array
-        const newResults = bingResults.filter(bingResult => 
-          !allContentResults.some(existingResult => 
-            existingResult.link === bingResult.link
-          )
-        );
-        
-        console.log(`Adding ${newResults.length} unique results from Bing`);
-        allContentResults = [...allContentResults, ...newResults];
+        try {
+          console.log(`Scraping Bing for query: "${query}"`);
+          const bingResults = await scrapeBingSearchResults(query, 80); // Reduced limit per query
+          
+          if (bingResults.length > 0) {
+            console.log(`Found ${bingResults.length} content results from Bing for query "${query}"`);
+            
+            // Filter out duplicates before adding
+            const newResults = bingResults.filter(result => 
+              !allContentResults.some(existingResult => 
+                existingResult.link === result.link
+              )
+            );
+            
+            console.log(`Adding ${newResults.length} unique Bing results`);
+            allContentResults = [...allContentResults, ...newResults];
+            
+            // Add a short delay between queries
+            await randomDelay(1000, 2000);
+          }
+        } catch (error) {
+          console.error(`Error scraping Bing for query "${query}":`, error);
+        }
       }
-    } catch (error) {
-      console.error("Error scraping Bing for content:", error);
     }
     
     // If we don't have enough content results, try SerpAPI as a fallback
