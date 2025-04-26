@@ -168,16 +168,13 @@ export default function TrafficHeatmap({ competitorContent }: TrafficHeatmapProp
             className="mb-4"
           />
           
-          {/* Source filter toggle group */}
+          {/* All results now come from Google only */}
           <div className="mt-3 mb-2">
             <h4 className="text-sm font-medium mb-2">Search Engine Source</h4>
-            <ToggleGroup type="single" value={sourceFilter} onValueChange={value => value && setSourceFilter(value)} className="justify-start">
-              <ToggleGroupItem value="all" aria-label="All sources" className="text-xs">All</ToggleGroupItem>
-              <ToggleGroupItem value="google" aria-label="Google results" className="text-xs bg-blue-50 data-[state=on]:bg-blue-100 data-[state=on]:text-blue-700">Google</ToggleGroupItem>
-              <ToggleGroupItem value="bing" aria-label="Bing results" className="text-xs bg-teal-50 data-[state=on]:bg-teal-100 data-[state=on]:text-teal-700">Bing</ToggleGroupItem>
-              <ToggleGroupItem value="yahoo" aria-label="Yahoo results" className="text-xs bg-purple-50 data-[state=on]:bg-purple-100 data-[state=on]:text-purple-700">Yahoo</ToggleGroupItem>
-              <ToggleGroupItem value="duckduckgo" aria-label="DuckDuckGo results" className="text-xs bg-orange-50 data-[state=on]:bg-orange-100 data-[state=on]:text-orange-700">DuckDuckGo</ToggleGroupItem>
-            </ToggleGroup>
+            <div className="flex items-center gap-2">
+              <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs">Google</span>
+              <span className="text-xs text-muted-foreground">Only using Google for best results</span>
+            </div>
           </div>
         </div>
       </CardHeader>
@@ -198,28 +195,14 @@ export default function TrafficHeatmap({ competitorContent }: TrafficHeatmapProp
                               onClick={() => setSelectedCell(cell)}
                             >
                               {cell.trafficValue}
-                              {/* Source indicators */}
-                              {cell.source === 'google' && (
-                                <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center">G</span>
-                              )}
-                              {cell.source === 'bing' && (
-                                <span className="absolute -top-1 -right-1 bg-teal-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center">B</span>
-                              )}
-                              {cell.source === 'yahoo' && (
-                                <span className="absolute -top-1 -right-1 bg-purple-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center">Y</span>
-                              )}
-                              {cell.source === 'duckduckgo' && (
-                                <span className="absolute -top-1 -right-1 bg-orange-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center">D</span>
-                              )}
+                              {/* All results come from Google now */}
+                              <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center">G</span>
                             </div>
                           </TooltipTrigger>
                           <TooltipContent side="top" className="max-w-[300px]">
                             <p className="font-semibold">{cell.content}</p>
                             <p className="text-xs mt-1">{cell.trafficLevel}</p>
-                            <p className="text-xs mt-1 opacity-75">Source: {cell.source === 'google' ? 'Google' : 
-                              cell.source === 'bing' ? 'Bing' : 
-                              cell.source === 'yahoo' ? 'Yahoo' : 
-                              cell.source === 'duckduckgo' ? 'DuckDuckGo' : 'Unknown'}</p>
+                            <p className="text-xs mt-1 opacity-75">Source: Google</p>
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
@@ -243,22 +226,10 @@ export default function TrafficHeatmap({ competitorContent }: TrafficHeatmapProp
                 <div className="flex items-center gap-2">
                   <p className="text-sm text-muted-foreground">{selectedCell.domain} • {selectedCell.trafficLevel}</p>
                   
-                  {/* Source badge */}
-                  {selectedCell.source && (
-                    <span className={`text-xs px-2 py-0.5 rounded-full ${
-                      selectedCell.source === 'google' ? 'bg-blue-100 text-blue-700' : 
-                      selectedCell.source === 'bing' ? 'bg-teal-100 text-teal-700' :
-                      selectedCell.source === 'yahoo' ? 'bg-purple-100 text-purple-700' :
-                      selectedCell.source === 'duckduckgo' ? 'bg-orange-100 text-orange-700' :
-                      'bg-gray-100 text-gray-700'
-                    }`}>
-                      {selectedCell.source === 'google' ? 'Google' : 
-                       selectedCell.source === 'bing' ? 'Bing' : 
-                       selectedCell.source === 'yahoo' ? 'Yahoo' : 
-                       selectedCell.source === 'duckduckgo' ? 'DuckDuckGo' : 
-                       'Unknown Source'}
-                    </span>
-                  )}
+                  {/* Source badge - always Google */}
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
+                    Google
+                  </span>
                 </div>
                 
                 <div className="mt-2 flex flex-wrap gap-1">

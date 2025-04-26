@@ -728,86 +728,41 @@ export const getSearchResults = async (domain: string, limit = 10): Promise<any[
     const query = `site:${domain}`;
     const allResults: any[] = [];
     
-    // Try all search engines in sequence, combining results
-    
-    // 1. Google
+    // Only use Google for search results
     try {
-      const googleResults = await scrapeGoogleSearchResults(query, Math.min(100, limit));
+      // Request up to 200 results to ensure we get enough
+      const googleResults = await scrapeGoogleSearchResults(query, Math.min(200, limit * 2));
       if (googleResults.length > 0) {
         console.log(`Found ${googleResults.length} Google results for ${domain}`);
+        
+        // Add source information to results
+        googleResults.forEach(result => {
+          result.source = 'google';
+        });
+        
         allResults.push(...googleResults);
+      } else {
+        // Try alternative query if no results found
+        console.log(`No results found for ${query}, trying alternative query`);
+        const altQuery = `"${domain.replace(/\.[^.]+$/, '')}" site:${domain}`;
+        const altResults = await scrapeGoogleSearchResults(altQuery, Math.min(200, limit * 2));
+        
+        if (altResults.length > 0) {
+          console.log(`Found ${altResults.length} Google results with alternative query`);
+          
+          // Add source information
+          altResults.forEach(result => {
+            result.source = 'google';
+          });
+          
+          allResults.push(...altResults);
+        }
       }
     } catch (googleError) {
       console.error(`Google scraping failed for ${domain}:`, googleError);
     }
     
-    // If we have enough results, return early
-    if (allResults.length >= limit) {
-      return allResults.slice(0, limit);
-    }
-    
-    // 2. Bing
-    try {
-      const bingResults = await scrapeBingSearchResults(query, Math.min(80, limit));
-      if (bingResults.length > 0) {
-        console.log(`Found ${bingResults.length} Bing results for ${domain}`);
-        
-        // Filter out duplicates before adding
-        const newResults = bingResults.filter(result => 
-          !allResults.some(existingResult => existingResult.link === result.link)
-        );
-        
-        allResults.push(...newResults);
-      }
-    } catch (bingError) {
-      console.error(`Bing scraping failed for ${domain}:`, bingError);
-    }
-    
-    // If we have enough results, return early
-    if (allResults.length >= limit) {
-      return allResults.slice(0, limit);
-    }
-    
-    // 3. Yahoo
-    try {
-      const yahooResults = await scrapeYahooSearchResults(query, Math.min(50, limit));
-      if (yahooResults.length > 0) {
-        console.log(`Found ${yahooResults.length} Yahoo results for ${domain}`);
-        
-        // Filter out duplicates before adding
-        const newResults = yahooResults.filter(result => 
-          !allResults.some(existingResult => existingResult.link === result.link)
-        );
-        
-        allResults.push(...newResults);
-      }
-    } catch (yahooError) {
-      console.error(`Yahoo scraping failed for ${domain}:`, yahooError);
-    }
-    
-    // If we have enough results, return early
-    if (allResults.length >= limit) {
-      return allResults.slice(0, limit);
-    }
-    
-    // 4. DuckDuckGo
-    try {
-      const ddgResults = await scrapeDuckDuckGoResults(query, Math.min(40, limit));
-      if (ddgResults.length > 0) {
-        console.log(`Found ${ddgResults.length} DuckDuckGo results for ${domain}`);
-        
-        // Filter out duplicates before adding
-        const newResults = ddgResults.filter(result => 
-          !allResults.some(existingResult => existingResult.link === result.link)
-        );
-        
-        allResults.push(...newResults);
-      }
-    } catch (ddgError) {
-      console.error(`DuckDuckGo scraping failed for ${domain}:`, ddgError);
-    }
-    
-    // Return what we have so far (even if less than requested)
+    // Return results (up to the limit)
     return allResults.slice(0, limit);
     
   } catch (error) {
@@ -1252,13 +1207,11 @@ export const processCompetitorContent = async (
         };
         
         // Get traffic level using the enhanced estimation function with content factors
-        // Boost scores for Google results (source priority)
-        let sourceBoost = 0;
-        if (result.source === 'google') {
-          sourceBoost = 2; // Prioritize Google results
-        } else if (result.source === 'bing') {
-          sourceBoost = 1; // Slight boost for Bing
-        }
+        // All results now come from Google
+        let sourceBoost = 2; // Standard boost for all results since they're all from Google
+        
+        // Mark the source as Google explicitly
+        result.source = 'google';
         
         const trafficLevel = estimateTrafficLevel(
           competitorDomain, 
@@ -1315,13 +1268,10 @@ export const processCompetitorContent = async (
         return (b.trafficScore || 0) - (a.trafficScore || 0);
       }
       
-      // If traffic scores are equal, prioritize by source
-      const sourceOrder = { 'google': 3, 'bing': 2, 'yahoo': 1, 'duckduckgo': 0, 'unknown': -1 };
-      const aSource = a.source || 'unknown';
-      const bSource = b.source || 'unknown';
-      
-      return (sourceOrder[bSource as keyof typeof sourceOrder] || -1) - 
-             (sourceOrder[aSource as keyof typeof sourceOrder] || -1);
+      // All sources are Google now, so sort by position if available
+      const aPosition = a.position || 100;
+      const bPosition = b.position || 100;
+      return aPosition - bPosition;
     });
     
     // If we have no results, return an empty array instead of using fallback data
