@@ -3,6 +3,7 @@ import * as serpapi from 'serpapi';
 import * as cheerio from 'cheerio';
 import natural from 'natural';
 import { CompetitorContent } from '@shared/schema';
+import { URL } from 'url';
 
 // API Keys
 const SERP_API_KEY = 'ca0472a6aca733869577b72e6d4773dc30f32f25f09433771a87b8871bf52f97';
@@ -10,6 +11,19 @@ const SIMILARWEB_API_KEY = '05dbc8d629d24585947c0c0d4c521114';
 
 // Configure serpapi with API key
 serpapi.config.api_key = SERP_API_KEY;
+
+// User agents for browser emulation
+const USER_AGENTS = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.1 Safari/605.1.15',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:94.0) Gecko/20100101 Firefox/94.0',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.45 Safari/537.36'
+];
+
+// Get random user agent
+const getRandomUserAgent = () => {
+  return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+};
 
 // Extract keywords from text using Natural
 export const extractKeywords = (text: string, count = 5): string[] => {
@@ -253,27 +267,172 @@ export const findCompetitorDomains = async (domain: string, limit = 10, keywords
   }
 };
 
-// Get search results from SerpAPI
+// Web scrape search results directly from Google
+export const scrapeGoogleSearchResults = async (query: string, limit = 100): Promise<any[]> => {
+  try {
+    console.log(`Scraping Google search results for: ${query}`);
+    
+    // Format query for URL
+    const formattedQuery = encodeURIComponent(query);
+    const url = `https://www.google.com/search?q=${formattedQuery}&num=100`;
+    
+    // Make request with random user agent
+    const response = await axios.get(url, {
+      headers: {
+        'User-Agent': getRandomUserAgent(),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Cache-Control': 'max-age=0'
+      }
+    });
+    
+    // Load HTML with Cheerio
+    const $ = cheerio.load(response.data);
+    const results: any[] = [];
+    
+    // Select all search result divs (adjust selector if needed)
+    $('.g').each((i, el) => {
+      if (i >= limit) return false; // Stop after reaching limit
+      
+      const titleEl = $(el).find('h3');
+      const linkEl = $(el).find('a').first();
+      const snippetEl = $(el).find('.VwiC3b');
+      
+      // Only include if we have all elements
+      if (titleEl.length && linkEl.length) {
+        const title = titleEl.text().trim();
+        const link = linkEl.attr('href');
+        const snippet = snippetEl.text().trim();
+        
+        // Skip if link doesn't start with http
+        if (!link || !link.startsWith('http')) return;
+        
+        results.push({
+          title,
+          link,
+          snippet,
+          position: i + 1
+        });
+      }
+    });
+    
+    console.log(`Scraped ${results.length} Google results for "${query}"`);
+    return results;
+  } catch (error) {
+    console.error(`Error scraping Google search results: ${error}`);
+    return [];
+  }
+};
+
+// Web scrape search results directly from Bing
+export const scrapeBingSearchResults = async (query: string, limit = 100): Promise<any[]> => {
+  try {
+    console.log(`Scraping Bing search results for: ${query}`);
+    
+    // Format query for URL
+    const formattedQuery = encodeURIComponent(query);
+    const url = `https://www.bing.com/search?q=${formattedQuery}&count=100`;
+    
+    // Make request with random user agent
+    const response = await axios.get(url, {
+      headers: {
+        'User-Agent': getRandomUserAgent(),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1'
+      }
+    });
+    
+    // Load HTML with Cheerio
+    const $ = cheerio.load(response.data);
+    const results: any[] = [];
+    
+    // Select all search result elements
+    $('.b_algo').each((i, el) => {
+      if (i >= limit) return false; // Stop after reaching limit
+      
+      const titleEl = $(el).find('h2 a');
+      const link = titleEl.attr('href');
+      const title = titleEl.text().trim();
+      const snippet = $(el).find('.b_caption p').text().trim();
+      
+      // Skip if link doesn't start with http
+      if (!link || !link.startsWith('http')) return;
+      
+      results.push({
+        title,
+        link,
+        snippet,
+        position: i + 1
+      });
+    });
+    
+    console.log(`Scraped ${results.length} Bing results for "${query}"`);
+    return results;
+  } catch (error) {
+    console.error(`Error scraping Bing search results: ${error}`);
+    return [];
+  }
+};
+
+// Get search results - first try direct scraping, fall back to SerpAPI
 export const getSearchResults = async (domain: string, limit = 10): Promise<any[]> => {
   try {
-    // Create a search for organic results from this domain with US results only
-    const params = {
-      q: `site:${domain}`,
-      num: limit,
-      engine: "google",
-      gl: "us", // country = US
-      hl: "en", // language = English
-    };
+    const query = `site:${domain}`;
     
-    const results = await serpapi.getJson(params);
+    // First try scraping Google directly
+    let googleResults = await scrapeGoogleSearchResults(query, limit);
     
-    if (results.organic_results) {
-      return results.organic_results.slice(0, limit);
+    // If that fails or returns no results, try Bing
+    if (googleResults.length === 0) {
+      console.log(`No Google results found, trying Bing for ${domain}`);
+      googleResults = await scrapeBingSearchResults(query, limit);
     }
     
-    return [];
+    // If both scraping methods fail, fall back to SerpAPI
+    if (googleResults.length === 0) {
+      console.log(`Direct scraping failed, falling back to SerpAPI for ${domain}`);
+      const params = {
+        q: query,
+        num: limit,
+        engine: "google",
+        gl: "us", // country = US
+        hl: "en", // language = English
+      };
+      
+      const results = await serpapi.getJson(params);
+      
+      if (results.organic_results) {
+        return results.organic_results.slice(0, limit);
+      }
+    }
+    
+    return googleResults.slice(0, limit);
   } catch (error) {
     console.error(`Error getting search results for ${domain}:`, error);
+    // Try SerpAPI as last resort
+    try {
+      console.log(`Scraping failed, using SerpAPI as fallback for ${domain}`);
+      const params = {
+        q: `site:${domain}`,
+        num: limit,
+        engine: "google",
+        gl: "us",
+        hl: "en",
+      };
+      
+      const results = await serpapi.getJson(params);
+      if (results.organic_results) {
+        return results.organic_results.slice(0, limit);
+      }
+    } catch (fallbackError) {
+      console.error(`Even SerpAPI fallback failed:`, fallbackError);
+    }
     return [];
   }
 };
@@ -354,47 +513,71 @@ export const processCompetitorContent = async (
         // Enhanced query to find only article/blog content and exclude root domain pages
         const contentTypes = "article OR blog OR guide OR tutorial OR resource OR news";
         const contentPaths = "blog OR article OR resource OR guide OR news OR post OR case-study";
-        const params = {
-          q: keywords 
-            ? `site:${competitorDomain} -inurl:index -inurl:homepage -inurl:contact -inurl:about ${contentPaths} (${keywords}) (${contentTypes})` 
-            : `site:${competitorDomain} -inurl:index -inurl:homepage -inurl:contact -inurl:about ${contentPaths} (${contentTypes})`,
-          num: 12, // Get more results per domain to filter through
-          engine: "google",
-          gl: "us", // country = US
-          hl: "en", // language = English
-        };
+        const query = keywords 
+          ? `site:${competitorDomain} -inurl:index -inurl:homepage -inurl:contact -inurl:about ${contentPaths} ${keywords} ${contentTypes}` 
+          : `site:${competitorDomain} -inurl:index -inurl:homepage -inurl:contact -inurl:about ${contentPaths} ${contentTypes}`;
         
-        // Make a single API call
-        let results;
+        // First try direct web scraping from Google
+        let organicResults: any[] = [];
+        
         try {
-          results = await serpapi.getJson(params);
-        } catch (error: any) {
-          console.error(`Error searching ${competitorDomain}: ${error?.message || 'Unknown error'}`);
+          // Try Google first
+          console.log(`Direct scraping Google for: ${query}`);
+          const googleResults = await scrapeGoogleSearchResults(query, 50);
           
-          // Generate reasonable fallback content for this domain
-          // Create more detailed fallback content with specific articles/blog paths
-          return [{
-            domain: competitorDomain,
-            result: {
-              title: `Best Practices and Guides from ${competitorDomain}`,
-              link: `https://${competitorDomain}/blog/best-practices`,
-              snippet: `Industry insights and best practices from ${competitorDomain}. Read detailed guides and tutorials on the latest trends.`,
-              position: 1
+          if (googleResults && googleResults.length > 0) {
+            organicResults = googleResults;
+          } else {
+            // If Google fails, try Bing
+            console.log(`No Google results, trying Bing for: ${query}`);
+            const bingResults = await scrapeBingSearchResults(query, 50);
+            
+            if (bingResults && bingResults.length > 0) {
+              organicResults = bingResults;
+            } else {
+              // If both direct scraping methods fail, use SerpAPI
+              console.log(`Direct scraping failed, using SerpAPI as fallback for: ${query}`);
+              
+              const serpResults = await serpapi.getJson({
+                q: query,
+                num: 12,
+                engine: "google",
+                gl: "us", 
+                hl: "en",
+              });
+              
+              if (serpResults && serpResults.organic_results) {
+                organicResults = serpResults.organic_results;
+              }
             }
-          }, {
-            domain: competitorDomain,
-            result: {
-              title: `Resources and Articles on ${competitorDomain}`,
-              link: `https://${competitorDomain}/resources/articles`,
-              snippet: `Explore in-depth articles and resources on ${competitorDomain} covering a range of industry topics and solutions.`,
-              position: 2
+          }
+        } catch (error) {
+          console.error(`Error with all search methods for ${competitorDomain}: ${error}`);
+          
+          // Return fallback content if all methods fail
+          return [
+            {
+              domain: competitorDomain,
+              result: {
+                title: `Best Practices and Guides from ${competitorDomain}`,
+                link: `https://${competitorDomain}/blog/best-practices`,
+                snippet: `Industry insights and best practices from ${competitorDomain}. Read detailed guides and tutorials on the latest trends.`,
+                position: 1
+              }
+            }, 
+            {
+              domain: competitorDomain,
+              result: {
+                title: `Resources and Articles on ${competitorDomain}`,
+                link: `https://${competitorDomain}/resources/articles`,
+                snippet: `Explore in-depth articles and resources on ${competitorDomain} covering a range of industry topics and solutions.`,
+                position: 2
+              }
             }
-          }];
+          ];
         }
         
-        // Process search results and filter out root domains and homepage-like content
-        const organicResults = results?.organic_results || [];
-        
+        // If we get here, we have results to process
         // Filter out results that appear to be root domains or homepages
         const filteredResults = organicResults.filter((result: any) => {
           const url = result.link.toLowerCase();
