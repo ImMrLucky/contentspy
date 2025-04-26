@@ -868,21 +868,25 @@ export const processCompetitorContent = async (
     // Create multiple variations of search queries for better results
     const searchQueries = [];
     
-    // Build direct content search queries with multiple variations
+    // Build more targeted content search queries with stronger content focus
     if (keywords) {
-      // Primary query - focused on keywords
-      searchQueries.push(`"${keywords}" -site:${domain} inurl:blog OR inurl:article`);
+      // Primary query - focused on keywords with strong content indicators
+      searchQueries.push(`"${keywords}" -site:${domain} (inurl:blog OR inurl:article OR inurl:guide OR inurl:resources)`);
       
-      // Secondary query - focused on domain name + keywords
-      searchQueries.push(`${domainName} ${keywords} -site:${domain} inurl:blog OR inurl:article OR inurl:resource`);
+      // How-to and tutorial focused query
+      searchQueries.push(`${domainName} ${keywords} how to -site:${domain} (inurl:blog OR inurl:tutorial OR inurl:guide)`);
       
-      // Industry-specific query
-      searchQueries.push(`${industryTerm} ${keywords} -site:${domain} inurl:blog OR inurl:guide`);
+      // Industry-specific trend/insight query
+      searchQueries.push(`${industryTerm} ${keywords} trends -site:${domain} (inurl:blog OR inurl:article OR inurl:insights)`);
+      
+      // Best practices content query
+      searchQueries.push(`${keywords} best practices -site:${domain} (inurl:blog OR inurl:guide)`);
     } else {
-      // Default to industry-focused queries when no keywords provided
-      searchQueries.push(`"${industryTerm}" -site:${domain} inurl:blog OR inurl:article`);
-      searchQueries.push(`${domainName} industry trends -site:${domain} inurl:blog OR inurl:article`);
-      searchQueries.push(`${domainName} best practices -site:${domain} inurl:guide OR inurl:resource`);
+      // Default to content-focused queries when no keywords provided
+      searchQueries.push(`"${industryTerm}" tips -site:${domain} (inurl:blog OR inurl:article OR inurl:guide)`);
+      searchQueries.push(`${domainName} industry trends -site:${domain} (inurl:blog OR inurl:insights OR inurl:resources)`);
+      searchQueries.push(`${industryTerm} best practices -site:${domain} (inurl:guide OR inurl:resource OR inurl:blog)`);
+      searchQueries.push(`${domainName} how to -site:${domain} (inurl:tutorial OR inurl:guide OR inurl:blog)`);
     }
     
     // Select the primary query for logs but we'll try all of them
@@ -1032,10 +1036,12 @@ export const processCompetitorContent = async (
     
     console.log(`Found total of ${allContentResults.length} content results across all sources`);
     
-    // Filter results to only include blog posts, articles, and real content pages
+    // Enhanced filtering to ONLY include relevant blog posts, articles, and content pages
     const filteredResults = allContentResults.filter(result => {
       try {
         const url = result.link.toLowerCase();
+        const title = (result.title || '').toLowerCase();
+        const snippet = (result.snippet || '').toLowerCase();
         
         // Skip results from the original domain
         if (url.includes(domain.toLowerCase())) return false;
@@ -1053,24 +1059,79 @@ export const processCompetitorContent = async (
         
         // Skip search engine results pages
         if (url.includes("google.com/search") ||
-            url.includes("bing.com/search")) {
+            url.includes("bing.com/search") ||
+            url.includes("yahoo.com/search") ||
+            url.includes("duckduckgo.com/search")) {
           return false;
         }
         
-        // Skip pages with no path segments
+        // Skip e-commerce and product pages
+        if (url.includes("/product/") ||
+            url.includes("/products/") ||
+            url.includes("/shop/") ||
+            url.includes("/cart/") ||
+            url.includes("/store/") ||
+            url.includes("/catalog/") ||
+            url.includes("amazon.com") ||
+            url.includes("ebay.com") ||
+            url.includes("etsy.com") ||
+            url.includes("walmart.com") ||
+            url.includes("shopify.com")) {
+          return false;
+        }
+        
+        // Skip pages that appear to be homepages or navigation pages
         const pathSegments = new URL(url).pathname.split('/').filter(Boolean);
         if (pathSegments.length === 0) return false;
         
-        // Include if it has content indicators in the path
-        return (
-          url.includes("/blog/") || 
-          url.includes("/article/") || 
-          url.includes("/news/") ||
-          url.includes("/resources/") ||
-          url.includes("/guide/") ||
-          url.includes("/post/") ||
-          pathSegments.length >= 2 // Likely a content page with depth
+        // Skip pages that don't have substantial content (based on likely navigation patterns)
+        if (pathSegments.includes("contact") ||
+            pathSegments.includes("about") ||
+            pathSegments.includes("faq") ||
+            pathSegments.includes("sitemap") ||
+            pathSegments.includes("login") ||
+            pathSegments.includes("register") ||
+            pathSegments.includes("terms") ||
+            pathSegments.includes("privacy")) {
+          return false;
+        }
+        
+        // Prioritize content that matches keywords (if provided)
+        const keywordsProvided = keywords?.toLowerCase() || domainName || '';
+        const keywordTerms = keywordsProvided.split(' ').filter(term => term.length > 3);
+        
+        // Check for term match in title or snippet
+        const hasKeywordMatch = keywordTerms.length === 0 || // No keywords specified
+          keywordTerms.some(term => 
+            title.includes(term) || snippet.includes(term)
+          );
+        
+        // Strong content indicators - if these are present, it's very likely content
+        const strongContentIndicators = [
+          "/blog/", "/article/", "/news/", "/post/",
+          "/guide/", "/resources/", "/insights/", "/learn/"
+        ];
+        
+        const hasStrongContentIndicator = strongContentIndicators.some(indicator => 
+          url.includes(indicator)
         );
+        
+        // Content format indicators in URL or title
+        const contentFormatPatterns = [
+          "how to", "guide", "tutorial", "tips", "best practices",
+          "vs", "versus", "comparison", "review", "ultimate",
+          "complete", "definitive", "essential", "everything you need",
+          "top", "ways to", "steps to", "trends", "insights"
+        ];
+        
+        const hasContentFormat = contentFormatPatterns.some(pattern => 
+          url.includes(pattern) || title.includes(pattern) || snippet.includes(pattern)
+        );
+        
+        // Return true only if it's content-focused AND relevant
+        return (hasStrongContentIndicator || hasContentFormat) && 
+               (hasKeywordMatch || keywordTerms.length === 0) &&
+               pathSegments.length >= 2; // Ensure some depth to the URL
       } catch (e) {
         // Skip any URLs that cause parsing errors
         return false;
