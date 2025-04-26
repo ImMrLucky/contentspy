@@ -339,14 +339,15 @@ export const processCompetitorContent = async (
         !d.includes(".org.uk")
       );
     
-    // Combine all competitor domains, ensuring no duplicates
-    const allCompetitorDomains = Array.from(new Set([...competitors, ...similarDomains])).slice(0, 15);
+    // Combine all competitor domains, ensuring no duplicates - get more competitors
+    const allCompetitorDomains = Array.from(new Set([...competitors, ...similarDomains])).slice(0, 20);
     
     console.log(`Found ${allCompetitorDomains.length} total competitor domains`);
     console.log(`Competitor domains: ${allCompetitorDomains.join(', ')}`);
     
     // For each competitor domain, use a simpler approach to avoid hitting API limits
-    const topContentPromises = allCompetitorDomains.slice(0, 8).map(async (competitorDomain) => {
+    // Increase to 12 domains to get more content
+    const topContentPromises = allCompetitorDomains.slice(0, 12).map(async (competitorDomain) => {
       try {
         console.log(`Fetching content for competitor: ${competitorDomain}`);
         
@@ -355,9 +356,9 @@ export const processCompetitorContent = async (
         const contentPaths = "blog OR article OR resource OR guide OR news OR post OR case-study";
         const params = {
           q: keywords 
-            ? `site:${competitorDomain} -inurl:index -inurl:homepage ${contentPaths} (${keywords}) (${contentTypes})` 
-            : `site:${competitorDomain} -inurl:index -inurl:homepage ${contentPaths} (${contentTypes})`,
-          num: 8, // Get more results to filter through
+            ? `site:${competitorDomain} -inurl:index -inurl:homepage -inurl:contact -inurl:about ${contentPaths} (${keywords}) (${contentTypes})` 
+            : `site:${competitorDomain} -inurl:index -inurl:homepage -inurl:contact -inurl:about ${contentPaths} (${contentTypes})`,
+          num: 12, // Get more results per domain to filter through
           engine: "google",
           gl: "us", // country = US
           hl: "en", // language = English
@@ -422,8 +423,8 @@ export const processCompetitorContent = async (
           return isContentPage;
         });
           
-        // Slice to get top 5 after filtering
-        const combinedResults = filteredResults.slice(0, 5);
+        // Slice to get more results after filtering
+        const combinedResults = filteredResults.slice(0, 8);
         
         if (combinedResults.length > 0) {
           return combinedResults.map((result: any) => ({
