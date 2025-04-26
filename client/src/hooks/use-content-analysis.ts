@@ -44,4 +44,4 @@ export function useContentAnalysis() {
     analyzeWebsite,
     isAnalyzing: analyzeWebsite.isPending,
   };
-}
+}console.log('Checking for errors with processCompetitorContent')

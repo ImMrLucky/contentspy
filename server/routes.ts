@@ -15,17 +15,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // API endpoint to analyze a website
   app.post("/api/analyze", async (req: Request, res: Response) => {
+    console.log("Received analyze request");
     try {
       const { url } = req.body;
+      console.log(`Analyzing URL: ${url}`);
       
       // Validate URL format
       if (!url || typeof url !== 'string') {
+        console.log("Invalid URL: not a string or empty");
         return res.status(400).json({ message: "Valid URL is required" });
       }
       
       try {
         new URL(url);
-      } catch (e) {
+      } catch (e: any) {
+        console.log(`Invalid URL format: ${e.message || "Unknown error"}`);
         return res.status(400).json({ message: "Invalid URL format" });
       }
       
