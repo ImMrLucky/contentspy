@@ -13,17 +13,56 @@ const randomDelay = async (min = 1000, max = 3000) => {
   return new Promise(resolve => setTimeout(resolve, delay));
 };
 
-// User agents for browser emulation
+// Exponential backoff for retrying after rate limits
+const exponentialBackoff = async (attempt = 0, baseDelay = 5000, maxAttempts = 3): Promise<boolean> => {
+  if (attempt >= maxAttempts) return false;
+  
+  const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 1000;
+  console.log(`Rate limit encountered. Backing off for ${Math.round(delay / 1000)} seconds (attempt ${attempt + 1}/${maxAttempts})...`);
+  await new Promise(resolve => setTimeout(resolve, delay));
+  return true;
+};
+
+// Improved user agents list with more variation
 const USER_AGENTS = [
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.1 Safari/605.1.15',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:94.0) Gecko/20100101 Firefox/94.0',
-  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.45 Safari/537.36'
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36 Edg/115.0.1901.203',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36 OPR/102.0.0.0',
+  'Mozilla/5.0 (iPad; CPU OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0'
 ];
 
-// Get random user agent
+// Function to get a random user agent from the list
 const getRandomUserAgent = () => {
   return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+};
+
+// IP rotation using multiple approaches (direct requests with different parameters)
+// Since we don't have actual proxies to use, we'll simulate IP rotation with varied request parameters
+const getRequestConfig = (attempt = 0) => {
+  // Add random variation to the request to try to bypass rate limits
+  const timeZones = ['EST', 'PST', 'CST', 'MST', 'GMT', 'CET', 'JST'];
+  const languages = ['en-US', 'en-GB', 'en-CA', 'en', 'en-AU'];
+  
+  // Generate semi-random configurations based on attempt number
+  return {
+    headers: {
+      'User-Agent': getRandomUserAgent(),
+      'Accept-Language': languages[attempt % languages.length],
+      'X-Timezone': timeZones[attempt % timeZones.length],
+      // Add various cache-control headers
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0'
+    }
+  };
 };
 
 // Extract keywords from text using Natural
@@ -240,36 +279,64 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
     
     // Try multiple Google scraping approaches - we'll rotate between them for reliability
     // We only need to try up to 4 pages total (2 pages each from different approaches)
-    const scrapingMethods = [
+    const scrapingMethods: Array<(page: number, retryAttempt?: number) => Promise<boolean>> = [
       // Method 1: Standard approach - Google.com
-      async (page: number) => {
+      async (page: number, retryAttempt = 0): Promise<boolean> => {
         try {
-          await randomDelay(2000, 3000); // Add a longer delay to avoid rate limiting
+          // Use longer delays for higher retry attempts
+          const baseDelay = 2000 + (retryAttempt * 1000);
+          await randomDelay(baseDelay, baseDelay + 3000);
+          
           const formattedQuery = encodeURIComponent(query);
           const start = page * 100;
-          const url = `https://www.google.com/search?q=${formattedQuery}&num=100&start=${start}&filter=0`;
+          
+          // Vary the query parameters slightly on retries to avoid detection
+          let url = `https://www.google.com/search?q=${formattedQuery}&num=100&start=${start}&filter=0`;
+          if (retryAttempt > 0) {
+            // Add some randomization to URL params on retries
+            const params = ['hl=en', 'gl=us', 'pws=0', 'nfpr=1'];
+            const randomParams = params.slice(0, Math.min(retryAttempt + 1, params.length));
+            url += `&${randomParams.join('&')}`;
+          }
           
           // Add a cache-busting parameter to avoid cached results
           const cacheBuster = new Date().getTime();
           const finalUrl = `${url}&cb=${cacheBuster}`;
           
+          // Get request config with rotating parameters
+          const reqConfig = getRequestConfig(retryAttempt);
+          
+          // Add additional browser-like headers
+          const headers = {
+            ...reqConfig.headers,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive', 
+            'Upgrade-Insecure-Requests': '1',
+            // Add some common browser-like headers
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1'
+          };
+          
+          // Random timeout between 25-35 seconds
+          const timeout = 25000 + Math.floor(Math.random() * 10000);
+          
           const response = await axios.get(finalUrl, {
-            headers: {
-              'User-Agent': getRandomUserAgent(),
-              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-              'Accept-Language': 'en-US,en;q=0.5',
-              'Accept-Encoding': 'gzip, deflate, br',
-              'Connection': 'keep-alive',
-              'Upgrade-Insecure-Requests': '1',
-              'Cache-Control': 'no-cache',
-              'Pragma': 'no-cache'
-            },
-            timeout: 20000, // 20 second timeout
+            headers,
+            timeout,
             validateStatus: (status) => status < 500 // Accept any status < 500 
           });
           
           if (response.status === 429 || response.status === 403) {
             console.log(`Rate limit hit (${response.status}) - trying alternative method`);
+            
+            // Try exponential backoff and retry if we have attempts left
+            if (await exponentialBackoff(retryAttempt, 5000, 2)) {
+              return await scrapingMethods[0](page, retryAttempt + 1);
+            }
+            
             return false;
           }
           
@@ -334,12 +401,27 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
       },
       
       // Method 2: Google search with different parameters and selectors
-      async (page: number) => {
+      async (page: number, retryAttempt = 0): Promise<boolean> => {
         try {
-          await randomDelay(1500, 3500); // Different delay pattern
+          // Vary delay based on retry attempt
+          const baseDelay = 3000 + (retryAttempt * 2000);
+          await randomDelay(baseDelay, baseDelay + 4000);
+          
           const formattedQuery = encodeURIComponent(query);
           const start = page * 10; // Different pagination strategy
-          const url = `https://www.google.com/search?q=${formattedQuery}&start=${start}&ie=utf-8&oe=utf-8&pws=0`;
+          
+          // Vary the URL parameters on retries
+          let url = `https://www.google.com/search?q=${formattedQuery}&start=${start}&ie=utf-8&oe=utf-8&pws=0`;
+          if (retryAttempt > 0) {
+            // Add different URL parameters on retries
+            const params = ['hl=en', 'gl=us', 'safe=active', 'filter=0', 'num=10'];
+            const randomParams = params.slice(0, Math.min(retryAttempt + 1, params.length));
+            url += `&${randomParams.join('&')}`;
+          }
+          
+          // Add a cache-busting parameter 
+          const cacheBuster = new Date().getTime() + Math.floor(Math.random() * 1000);
+          url += `&random=${cacheBuster}`;
           
           const response = await axios.get(url, {
             headers: {
@@ -348,13 +430,24 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
               'Accept-Language': 'en-US,en;q=0.9',
               'Connection': 'keep-alive',
               'Referer': 'https://www.google.com/',
-              'Upgrade-Insecure-Requests': '1'
+              'Upgrade-Insecure-Requests': '1',
+              // Add browser-like headers
+              'Sec-Fetch-Dest': 'document',
+              'Sec-Fetch-Mode': 'navigate', 
+              'Sec-Fetch-Site': 'same-origin',
+              'Sec-Fetch-User': '?1'
             },
-            timeout: 20000
+            timeout: 30000
           });
           
           if (response.status === 429 || response.status === 403) {
             console.log(`Rate limit hit (${response.status}) - trying alternative method`);
+            
+            // Try exponential backoff and retry
+            if (await exponentialBackoff(retryAttempt, 6000, 2)) {
+              return await scrapingMethods[1](page, retryAttempt + 1);
+            }
+            
             return false;
           }
           
