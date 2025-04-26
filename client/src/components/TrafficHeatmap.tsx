@@ -24,6 +24,8 @@ interface HeatmapCell {
   url: string;
   trafficLevel: string;
   trafficValue: number;
+  trafficScore?: number;  // New numeric score that includes source boost
+  source?: string;        // Search engine source
   colorIntensity: string;
   keywords: string[];
 }
@@ -45,6 +47,7 @@ interface TrafficHeatmapProps {
 export default function TrafficHeatmap({ competitorContent }: TrafficHeatmapProps) {
   const [viewMode, setViewMode] = useState<string>("all");
   const [threshold, setThreshold] = useState<number[]>([1]); // Traffic threshold filter
+  const [sourceFilter, setSourceFilter] = useState<string>("all"); // Filter by search engine source
   const [heatmapData, setHeatmapData] = useState<HeatmapCell[]>([]);
   const [domains, setDomains] = useState<string[]>([]);
   const [selectedCell, setSelectedCell] = useState<HeatmapCell | null>(null);
@@ -69,6 +72,8 @@ export default function TrafficHeatmap({ competitorContent }: TrafficHeatmapProp
         url: content.url,
         trafficLevel: content.trafficLevel || "Unknown",
         trafficValue,
+        trafficScore: content.trafficScore, // Include the new trafficScore property
+        source: content.source || "unknown", // Include the source search engine
         colorIntensity,
         keywords: content.keywords || [],
       };
@@ -77,21 +82,29 @@ export default function TrafficHeatmap({ competitorContent }: TrafficHeatmapProp
     setHeatmapData(newHeatmapData);
   }, [competitorContent]);
   
-  // Filter data based on view mode and threshold
+  // Filter data based on view mode, threshold, and source
   const filteredData = heatmapData.filter(cell => {
+    // First check if it meets traffic threshold
     const meetsThreshold = cell.trafficValue >= threshold[0];
     
-    if (viewMode === "all") {
-      return meetsThreshold;
-    } else if (viewMode === "high") {
-      return cell.trafficValue >= 5 && meetsThreshold;
+    // Then check if it meets traffic level filter
+    let meetsTrafficLevel = true;
+    if (viewMode === "high") {
+      meetsTrafficLevel = cell.trafficValue >= 5;
     } else if (viewMode === "medium") {
-      return cell.trafficValue >= 3 && cell.trafficValue < 5 && meetsThreshold;
+      meetsTrafficLevel = cell.trafficValue >= 3 && cell.trafficValue < 5;
     } else if (viewMode === "low") {
-      return cell.trafficValue < 3 && meetsThreshold;
+      meetsTrafficLevel = cell.trafficValue < 3;
     }
     
-    return meetsThreshold;
+    // Then check if it meets source filter
+    let meetsSourceFilter = true;
+    if (sourceFilter !== "all") {
+      meetsSourceFilter = cell.source === sourceFilter;
+    }
+    
+    // Return true only if it meets all filters
+    return meetsThreshold && meetsTrafficLevel && meetsSourceFilter;
   });
   
   // Get color intensity based on traffic value (1-7)
@@ -169,15 +182,22 @@ export default function TrafficHeatmap({ competitorContent }: TrafficHeatmapProp
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <div
-                              className={`${cell.colorIntensity} rounded-md h-14 w-14 cursor-pointer transition-all hover:scale-105 flex items-center justify-center text-xs text-center text-white font-medium shadow`}
+                              className={`${cell.colorIntensity} rounded-md h-14 w-14 cursor-pointer transition-all hover:scale-105 flex flex-col items-center justify-center text-xs text-center text-white font-medium shadow relative`}
                               onClick={() => setSelectedCell(cell)}
                             >
                               {cell.trafficValue}
+                              {cell.source === 'google' && (
+                                <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center">G</span>
+                              )}
                             </div>
                           </TooltipTrigger>
                           <TooltipContent side="top" className="max-w-[300px]">
                             <p className="font-semibold">{cell.content}</p>
                             <p className="text-xs mt-1">{cell.trafficLevel}</p>
+                            <p className="text-xs mt-1 opacity-75">Source: {cell.source === 'google' ? 'Google' : 
+                              cell.source === 'bing' ? 'Bing' : 
+                              cell.source === 'yahoo' ? 'Yahoo' : 
+                              cell.source === 'duckduckgo' ? 'DuckDuckGo' : 'Unknown'}</p>
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
@@ -198,7 +218,27 @@ export default function TrafficHeatmap({ competitorContent }: TrafficHeatmapProp
             <div className="flex justify-between items-start">
               <div>
                 <h3 className="font-semibold">{selectedCell.content}</h3>
-                <p className="text-sm text-muted-foreground">{selectedCell.domain} • {selectedCell.trafficLevel}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm text-muted-foreground">{selectedCell.domain} • {selectedCell.trafficLevel}</p>
+                  
+                  {/* Source badge */}
+                  {selectedCell.source && (
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${
+                      selectedCell.source === 'google' ? 'bg-blue-100 text-blue-700' : 
+                      selectedCell.source === 'bing' ? 'bg-teal-100 text-teal-700' :
+                      selectedCell.source === 'yahoo' ? 'bg-purple-100 text-purple-700' :
+                      selectedCell.source === 'duckduckgo' ? 'bg-orange-100 text-orange-700' :
+                      'bg-gray-100 text-gray-700'
+                    }`}>
+                      {selectedCell.source === 'google' ? 'Google' : 
+                       selectedCell.source === 'bing' ? 'Bing' : 
+                       selectedCell.source === 'yahoo' ? 'Yahoo' : 
+                       selectedCell.source === 'duckduckgo' ? 'DuckDuckGo' : 
+                       'Unknown Source'}
+                    </span>
+                  )}
+                </div>
+                
                 <div className="mt-2 flex flex-wrap gap-1">
                   {selectedCell.keywords.map((keyword, idx) => (
                     <span key={idx} className="text-xs px-2 py-1 bg-muted rounded-full">{keyword}</span>

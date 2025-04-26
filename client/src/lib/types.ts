@@ -21,6 +21,8 @@ export interface CompetitorContent {
   publishDate?: string;
   description?: string;
   trafficLevel?: string;
+  trafficScore?: number;  // Numeric score for traffic volume (higher = more traffic)
+  source?: string;        // The search engine source (google, bing, yahoo, duckduckgo)
   keywords: string[];
 }
 
