@@ -767,32 +767,52 @@ export const processCompetitorContent = async (
       }
     }
     
-    // If we don't have enough content results, try SerpAPI as a fallback
-    if (allContentResults.length < 20) {
+    // Use SerpAPI as a fallback if direct scraping didn't yield enough results or hit rate limits
+    if (allContentResults.length < 40) {
       try {
         console.log("Direct scraping yielded insufficient results, using SerpAPI as fallback");
-        const params = {
-          q: directContentQuery,
-          num: 100,
-          engine: "google",
-          gl: "us", // country = US
-          hl: "en", // language = English
-        };
         
-        const serpResults = await serpapi.getJson(params);
-        
-        if (serpResults && serpResults.organic_results) {
-          const newResults = serpResults.organic_results.filter((serpResult: any) => 
-            !allContentResults.some(existingResult => 
-              existingResult.link === serpResult.link
-            )
-          );
+        // Try multiple queries with SerpAPI to get more diverse results
+        for (let i = 0; i < Math.min(searchQueries.length, 2); i++) {
+          const query = searchQueries[i];
+          console.log(`Using SerpAPI for query: "${query}"`);
           
-          console.log(`Adding ${newResults.length} unique results from SerpAPI`);
-          allContentResults = [...allContentResults, ...newResults];
+          const params = {
+            q: query,
+            num: 100,
+            engine: "google",
+            gl: "us", // country = US
+            hl: "en", // language = English
+          };
+          
+          try {
+            const serpResults = await serpapi.getJson(params);
+            
+            if (serpResults && serpResults.organic_results) {
+              const newResults = serpResults.organic_results.filter((serpResult: any) => 
+                !allContentResults.some(existingResult => 
+                  existingResult.link === serpResult.link
+                )
+              );
+              
+              console.log(`Adding ${newResults.length} unique results from SerpAPI query ${i+1}`);
+              allContentResults = [...allContentResults, ...newResults];
+              
+              // If we've got enough results, no need to keep trying
+              if (allContentResults.length >= 60) {
+                break;
+              }
+              
+              // Brief pause between SerpAPI queries
+              await randomDelay(1000, 2000);
+            }
+          } catch (error) {
+            console.error(`Error with SerpAPI query ${i+1}:`, error);
+            continue; // Try the next query
+          }
         }
       } catch (error) {
-        console.error("Error with SerpAPI fallback:", error);
+        console.error("Error with all SerpAPI fallback attempts:", error);
       }
     }
     
@@ -883,14 +903,37 @@ export const processCompetitorContent = async (
     const allTopContent: {domain: string, result: any}[] = [];
     
     Object.entries(resultsByDomain).forEach(([domain, results]) => {
-      // Take up to 8 results per domain
-      results.slice(0, 8).forEach(result => {
+      // Take up to 12 results per domain (increased from 8)
+      // This helps when we have fewer domains but good article content
+      results.slice(0, 12).forEach(result => {
         allTopContent.push({
           domain,
           result
         });
       });
     });
+    
+    // If we still don't have enough results, add more from domains
+    // that have the most content (likely the most relevant competitors)
+    if (allTopContent.length < 30) {
+      const sortedDomains = Object.entries(resultsByDomain)
+        .sort((a, b) => b[1].length - a[1].length); // Sort by number of results
+      
+      for (const [domain, results] of sortedDomains) {
+        if (allTopContent.length >= 30) break;
+        
+        // Add results starting from the 12th one (index 12) for domains with more content
+        const startIndex = Math.min(12, results.length);
+        for (let i = startIndex; i < results.length; i++) {
+          allTopContent.push({
+            domain,
+            result: results[i]
+          });
+          
+          if (allTopContent.length >= 30) break;
+        }
+      }
+    }
     
     console.log(`Found ${allTopContent.length} pieces of competitor content`);
     
