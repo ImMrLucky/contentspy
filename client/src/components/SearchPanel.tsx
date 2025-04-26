@@ -7,17 +7,18 @@ import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, For
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
-// Create schema for URL validation
+// Create schema for form validation
 const formSchema = z.object({
   url: z.string()
     .url({ message: "Please enter a valid URL" })
     .refine(url => url.startsWith("http://") || url.startsWith("https://"), {
       message: "URL must start with http:// or https://",
     }),
+  keywords: z.string().optional(),
 });
 
 interface SearchPanelProps {
-  onAnalyze: (url: string) => void;
+  onAnalyze: (url: string, keywords?: string) => void;
   isLoading: boolean;
 }
 
@@ -27,12 +28,13 @@ export default function SearchPanel({ onAnalyze, isLoading }: SearchPanelProps) 
     resolver: zodResolver(formSchema),
     defaultValues: {
       url: "",
+      keywords: "",
     },
   });
 
   // Submit handler
   function onSubmit(values: z.infer<typeof formSchema>) {
-    onAnalyze(values.url);
+    onAnalyze(values.url, values.keywords || "");
   }
 
   return (
@@ -55,20 +57,11 @@ export default function SearchPanel({ onAnalyze, isLoading }: SearchPanelProps) 
                 <FormItem>
                   <FormLabel>Website URL</FormLabel>
                   <FormControl>
-                    <div className="flex gap-2">
-                      <Input 
-                        placeholder="https://example.com" 
-                        {...field} 
-                        className="flex-1"
-                      />
-                      <Button 
-                        type="submit" 
-                        disabled={isLoading}
-                        className="bg-gradient-to-r from-primary to-secondary hover:from-primary/90 hover:to-secondary/90 text-white"
-                      >
-                        {isLoading ? "Analyzing..." : "Analyze"}
-                      </Button>
-                    </div>
+                    <Input 
+                      placeholder="https://example.com" 
+                      {...field} 
+                      className="w-full"
+                    />
                   </FormControl>
                   <FormDescription>
                     Enter the URL of the website you want to analyze
@@ -77,6 +70,35 @@ export default function SearchPanel({ onAnalyze, isLoading }: SearchPanelProps) 
                 </FormItem>
               )}
             />
+            
+            <FormField
+              control={form.control}
+              name="keywords"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Keyword Phrases (Optional)</FormLabel>
+                  <FormControl>
+                    <Input 
+                      placeholder="boiler repair, heating systems, HVAC contractors" 
+                      {...field} 
+                      className="w-full"
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    Enter keyword phrases to help search for more relevant competitors (comma separated)
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            
+            <Button 
+              type="submit" 
+              disabled={isLoading}
+              className="w-full bg-gradient-to-r from-primary to-secondary hover:from-primary/90 hover:to-secondary/90 text-white"
+            >
+              {isLoading ? "Analyzing..." : "Analyze Competitors"}
+            </Button>
           </form>
         </Form>
 

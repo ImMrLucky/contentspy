@@ -14,10 +14,10 @@ export default function Home() {
   const { analyzeWebsite, isAnalyzing } = useContentAnalysis();
   const { toast } = useToast();
 
-  const handleAnalyze = async (url: string) => {
+  const handleAnalyze = async (url: string, keywords?: string) => {
     setAnalyzedUrl(url);
     try {
-      const result = await analyzeWebsite.mutateAsync(url);
+      const result = await analyzeWebsite.mutateAsync({ url, keywords });
       setAnalysisResult(result);
     } catch (error: any) {
       console.error("Analysis error:", error);
