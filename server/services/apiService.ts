@@ -7,36 +7,91 @@ import { URL } from 'url';
 // API Keys (Only using SimilarWeb now)
 const SIMILARWEB_API_KEY = process.env.SIMILARWEB_API_KEY || '05dbc8d629d24585947c0c0d4c521114';
 
+// Very simple in-memory cache for search results to prevent repeated identical requests
+interface CacheEntry {
+  timestamp: number;
+  results: any[];
+}
+
+// Cache with 1-hour expiration
+const searchResultsCache: Record<string, CacheEntry> = {};
+const CACHE_TTL = 60 * 60 * 1000; // 1 hour in milliseconds
+
+// Function to get cached results or undefined if not cached
+const getCachedResults = (cacheKey: string): any[] | undefined => {
+  const entry = searchResultsCache[cacheKey];
+  if (!entry) return undefined;
+  
+  // Check if cache entry is still valid
+  const now = Date.now();
+  if (now - entry.timestamp > CACHE_TTL) {
+    delete searchResultsCache[cacheKey];
+    return undefined;
+  }
+  
+  // Return cached results
+  return entry.results;
+};
+
+// Function to cache search results
+const cacheResults = (cacheKey: string, results: any[]): void => {
+  searchResultsCache[cacheKey] = {
+    timestamp: Date.now(),
+    results
+  };
+};
+
 // Helper function for adding random delays between requests to avoid rate limits
 const randomDelay = async (min = 1000, max = 3000) => {
   const delay = Math.floor(Math.random() * (max - min + 1)) + min;
   return new Promise(resolve => setTimeout(resolve, delay));
 };
 
-// Exponential backoff for retrying after rate limits
+// Improved exponential backoff for retrying after rate limits
 const exponentialBackoff = async (attempt = 0, baseDelay = 5000, maxAttempts = 3): Promise<boolean> => {
   if (attempt >= maxAttempts) return false;
   
-  const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 1000;
+  // Add more randomization to make patterns less detectable
+  const jitter = Math.random() * 1000 - 500; // +/- 500ms jitter
+  const delay = baseDelay * Math.pow(2, attempt) + jitter;
   console.log(`Rate limit encountered. Backing off for ${Math.round(delay / 1000)} seconds (attempt ${attempt + 1}/${maxAttempts})...`);
   await new Promise(resolve => setTimeout(resolve, delay));
   return true;
 };
 
-// Improved user agents list with more variation
+// Extended user agents list with more modern browsers and variations
 const USER_AGENTS = [
+  // Chrome
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0',
-  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36 Edg/115.0.1901.203',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36 OPR/102.0.0.0',
-  'Mozilla/5.0 (iPad; CPU OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
-  'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0'
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36',
+  
+  // Firefox
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:118.0) Gecko/20100101 Firefox/118.0',
+  'Mozilla/5.0 (X11; Linux x86_64; rv:119.0) Gecko/20100101 Firefox/119.0',
+  
+  // Safari
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
+  
+  // Edge
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36 Edg/116.0.1938.62',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36 Edg/117.0.2045.47',
+  
+  // Opera
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36 OPR/102.0.0.0',
+  
+  // Mobile
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
+  'Mozilla/5.0 (iPad; CPU OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
+  'Mozilla/5.0 (Linux; Android 13; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36',
+  'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Mobile Safari/537.36'
 ];
 
 // Function to get a random user agent from the list
@@ -44,19 +99,34 @@ const getRandomUserAgent = () => {
   return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
 };
 
-// IP rotation using multiple approaches (direct requests with different parameters)
-// Since we don't have actual proxies to use, we'll simulate IP rotation with varied request parameters
+// Enhanced IP rotation simulation (direct requests with different parameters)
+// Since we don't have actual proxies to use, we'll simulate IP rotation with more varied request parameters
 const getRequestConfig = (attempt = 0) => {
-  // Add random variation to the request to try to bypass rate limits
-  const timeZones = ['EST', 'PST', 'CST', 'MST', 'GMT', 'CET', 'JST'];
-  const languages = ['en-US', 'en-GB', 'en-CA', 'en', 'en-AU'];
+  // More varied parameters to make requests look different
+  const timeZones = ['EST', 'PST', 'CST', 'MST', 'GMT', 'CET', 'JST', 'AEST', 'IST', 'EET'];
+  const languages = ['en-US', 'en-GB', 'en-CA', 'en', 'en-AU', 'en-NZ', 'en-ZA', 'en-IE'];
+  const platforms = ['Windows', 'Macintosh', 'X11', 'Linux', 'iPhone', 'iPad', 'Android'];
+  const encodings = ['gzip, deflate, br', 'gzip, deflate', 'br', 'gzip'];
   
-  // Generate semi-random configurations based on attempt number
+  // Pick values based on attempt number but with randomization
+  const randomOffset = Math.floor(Math.random() * 3);
+  const timeZoneIndex = (attempt + randomOffset) % timeZones.length;
+  const languageIndex = (attempt + randomOffset * 2) % languages.length;
+  const platformIndex = (attempt + randomOffset * 3) % platforms.length;
+  const encodingIndex = attempt % encodings.length;
+  
+  // Generate semi-random configurations
   return {
     headers: {
       'User-Agent': getRandomUserAgent(),
-      'Accept-Language': languages[attempt % languages.length],
-      'X-Timezone': timeZones[attempt % timeZones.length],
+      'Accept-Language': languages[languageIndex] + ';q=0.9',
+      'Accept-Encoding': encodings[encodingIndex],
+      'X-Timezone': timeZones[timeZoneIndex],
+      'X-Platform': platforms[platformIndex],
+      // Add connection variations
+      'Connection': Math.random() > 0.5 ? 'keep-alive' : 'close',
+      // Add do-not-track header randomly
+      ...(Math.random() > 0.7 ? { 'DNT': '1' } : {}),
       // Add various cache-control headers
       'Cache-Control': 'no-cache, no-store, must-revalidate',
       'Pragma': 'no-cache',
@@ -274,54 +344,79 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
   try {
     console.log(`Scraping Google search results for: ${query}`);
     
+    // Check if we have cached results first
+    const cacheKey = `google_${query}_${limit}`;
+    const cachedResults = getCachedResults(cacheKey);
+    if (cachedResults) {
+      console.log(`Using cached results for query: ${query}`);
+      return cachedResults;
+    }
+    
     // We need to make multiple requests to get 200 results (Google shows 100 max per page)
     const allResults: any[] = [];
     
     // Try multiple Google scraping approaches - we'll rotate between them for reliability
-    // We only need to try up to 4 pages total (2 pages each from different approaches)
+    // We'll use 3 different methods now, plus fallbacks
     const scrapingMethods: Array<(page: number, retryAttempt?: number) => Promise<boolean>> = [
-      // Method 1: Standard approach - Google.com
+      // Method 1: Standard approach - Google.com with high result count
       async (page: number, retryAttempt = 0): Promise<boolean> => {
         try {
-          // Use longer delays for higher retry attempts
-          const baseDelay = 2000 + (retryAttempt * 1000);
+          // Use longer delays for higher retry attempts with jitter
+          const jitter = Math.random() * 1000 - 500;
+          const baseDelay = 2000 + (retryAttempt * 1000) + jitter;
           await randomDelay(baseDelay, baseDelay + 3000);
           
           const formattedQuery = encodeURIComponent(query);
           const start = page * 100;
           
-          // Vary the query parameters slightly on retries to avoid detection
+          // Vary the query parameters more significantly on retries to avoid detection
           let url = `https://www.google.com/search?q=${formattedQuery}&num=100&start=${start}&filter=0`;
           if (retryAttempt > 0) {
-            // Add some randomization to URL params on retries
-            const params = ['hl=en', 'gl=us', 'pws=0', 'nfpr=1'];
-            const randomParams = params.slice(0, Math.min(retryAttempt + 1, params.length));
+            // Add more randomization to URL params on retries
+            const allParams = ['hl=en', 'gl=us', 'pws=0', 'nfpr=1', 'tbs=qdr:y', 'sourceid=chrome'];
+            // Select a random subset of parameters
+            const paramCount = Math.min(retryAttempt + 1 + Math.floor(Math.random() * 2), allParams.length);
+            const randomParams = [];
+            
+            // Pick random params without repeating
+            const paramIndices = new Set<number>();
+            while (paramIndices.size < paramCount) {
+              paramIndices.add(Math.floor(Math.random() * allParams.length));
+            }
+            
+            // Add selected params to URL
+            Array.from(paramIndices).forEach(index => {
+              randomParams.push(allParams[index]);
+            });
+            
             url += `&${randomParams.join('&')}`;
           }
           
-          // Add a cache-busting parameter to avoid cached results
-          const cacheBuster = new Date().getTime();
+          // Add a cache-busting parameter with more randomness
+          const cacheBuster = Date.now() + Math.floor(Math.random() * 100000);
           const finalUrl = `${url}&cb=${cacheBuster}`;
           
           // Get request config with rotating parameters
           const reqConfig = getRequestConfig(retryAttempt);
           
-          // Add additional browser-like headers
+          // Add additional browser-like headers with more variety
           const headers = {
             ...reqConfig.headers,
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive', 
+            'Connection': Math.random() > 0.5 ? 'keep-alive' : 'close', 
             'Upgrade-Insecure-Requests': '1',
-            // Add some common browser-like headers
+            // Make requests look more like a browser
             'Sec-Fetch-Dest': 'document',
             'Sec-Fetch-Mode': 'navigate',
             'Sec-Fetch-Site': 'none',
-            'Sec-Fetch-User': '?1'
+            'Sec-Fetch-User': '?1',
+            // Add random cookie consent header sometimes
+            ...(Math.random() > 0.7 ? { 'Cookie': 'CONSENT=YES+' } : {})
           };
           
-          // Random timeout between 25-35 seconds
-          const timeout = 25000 + Math.floor(Math.random() * 10000);
+          // Randomize timeout between 25-40 seconds
+          const timeout = 25000 + Math.floor(Math.random() * 15000);
           
           const response = await axios.get(finalUrl, {
             headers,
@@ -344,14 +439,14 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
           const $ = cheerio.load(response.data);
           let resultsFound = 0;
           
-          // Try multiple selector patterns for different Google layouts
-          $('.g, .Gx5Zad, .tF2Cxc, .yuRUbf, .MjjYud, .kvH3mc').each((i, el) => {
+          // Try multiple selector patterns for different Google layouts - expanded list for latest patterns
+          $('.g, .Gx5Zad, .tF2Cxc, .yuRUbf, .MjjYud, .kvH3mc, .v7W49e, .ULSxyf, .MjjYud, .hlcw0c').each((i, el) => {
             if (allResults.length >= limit) return false;
             
             // Try different selector patterns based on Google's current layout
-            const titleEl = $(el).find('h3, .DKV0Md, .LC20lb');
-            const linkEl = $(el).find('a[href^="http"], .yuRUbf a, a.l');
-            const snippetEl = $(el).find('.VwiC3b, .lEBKkf, .s3v9rd, .st');
+            const titleEl = $(el).find('h3, .DKV0Md, .LC20lb, .DVO7fd');
+            const linkEl = $(el).find('a[href^="http"], .yuRUbf a, a.l, .cUnQKe a');
+            const snippetEl = $(el).find('.VwiC3b, .lEBKkf, .s3v9rd, .st, .lyLwlc, .w1C3Le');
             
             // Only include if we found title and link
             if (titleEl.length && linkEl.length) {
@@ -400,58 +495,69 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
         }
       },
       
-      // Method 2: Google search with different parameters and selectors
+      // Method 2: Google search with different parameters, selectors, and reduced results per page
       async (page: number, retryAttempt = 0): Promise<boolean> => {
         try {
-          // Vary delay based on retry attempt
-          const baseDelay = 3000 + (retryAttempt * 2000);
+          // Vary delay based on retry attempt with jitter
+          const jitter = Math.random() * 1500 - 750;
+          const baseDelay = 3000 + (retryAttempt * 2000) + jitter;
           await randomDelay(baseDelay, baseDelay + 4000);
           
           const formattedQuery = encodeURIComponent(query);
           const start = page * 10; // Different pagination strategy
           
-          // Vary the URL parameters on retries
+          // Vary the URL parameters on retries - using a different parameter approach
           let url = `https://www.google.com/search?q=${formattedQuery}&start=${start}&ie=utf-8&oe=utf-8&pws=0`;
           if (retryAttempt > 0) {
             // Add different URL parameters on retries
-            const params = ['hl=en', 'gl=us', 'safe=active', 'filter=0', 'num=10'];
-            const randomParams = params.slice(0, Math.min(retryAttempt + 1, params.length));
+            const allParams = ['hl=en', 'gl=us', 'safe=active', 'filter=0', 'num=10', 'source=hp', 'ei=' + Math.random().toString(36).substring(2, 10)];
+            // Select a random subset of 3-5 parameters
+            const paramCount = 3 + Math.floor(Math.random() * 3);
+            const randomIndices = new Set<number>();
+            while (randomIndices.size < paramCount) {
+              randomIndices.add(Math.floor(Math.random() * allParams.length));
+            }
+            
+            const randomParams = Array.from(randomIndices).map(index => allParams[index]);
             url += `&${randomParams.join('&')}`;
           }
           
-          // Add a cache-busting parameter 
-          const cacheBuster = new Date().getTime() + Math.floor(Math.random() * 1000);
+          // Add a cache-busting parameter with more variety
+          const cacheBuster = Date.now() + Math.floor(Math.random() * 100000);
           url += `&random=${cacheBuster}`;
           
           // Get request config with different parameters for this method
           const reqConfig = getRequestConfig(retryAttempt + 5); // Use different set of params than method 1
           
-          // Add additional browser-like headers
+          // Add additional browser-like headers with more variety
           const headers = {
             ...reqConfig.headers,
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-            'Connection': 'keep-alive',
-            'Referer': 'https://www.google.com/',
+            'Connection': Math.random() > 0.5 ? 'keep-alive' : 'close',
+            'Referer': Math.random() > 0.5 ? 'https://www.google.com/' : undefined,
             'Upgrade-Insecure-Requests': '1',
             // Add browser-like headers
             'Sec-Fetch-Dest': 'document',
             'Sec-Fetch-Mode': 'navigate', 
-            'Sec-Fetch-Site': 'same-origin',
-            'Sec-Fetch-User': '?1'
+            'Sec-Fetch-Site': Math.random() > 0.5 ? 'same-origin' : 'none',
+            'Sec-Fetch-User': '?1',
+            // Randomize cookie consent
+            ...(Math.random() > 0.6 ? { 'Cookie': 'CONSENT=YES+sharedstate' } : {})
           };
           
-          // Random timeout between 25-35 seconds
-          const timeout = 25000 + Math.floor(Math.random() * 10000);
+          // Randomize timeout between 20-35 seconds
+          const timeout = 20000 + Math.floor(Math.random() * 15000);
           
           const response = await axios.get(url, {
             headers,
-            timeout
+            timeout,
+            validateStatus: (status) => status < 500
           });
           
           if (response.status === 429 || response.status === 403) {
             console.log(`Rate limit hit (${response.status}) - trying alternative method`);
             
-            // Try exponential backoff and retry
+            // Try exponential backoff and retry with longer delays
             if (await exponentialBackoff(retryAttempt, 6000, 2)) {
               return await scrapingMethods[1](page, retryAttempt + 1);
             }
@@ -462,14 +568,14 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
           const $ = cheerio.load(response.data);
           let resultsFound = 0;
           
-          // Different selector approach
-          $('div.g, div[data-hveid], .rc, .yuRUbf').each((i, el) => {
+          // Different selector approach - expanded for latest Google layouts
+          $('div.g, div[data-hveid], .rc, .yuRUbf, .Qlx9o, .x54gtf, .hgKElc, .kp-blk').each((i, el) => {
             if (allResults.length >= limit) return false;
             
             // Method 2 uses different selectors
-            const titleEl = $(el).find('h3, .LC20lb');
-            const linkEl = $(el).find('a[href^="http"], a.l, cite.iUh30');
-            const snippetEl = $(el).find('.st, .aCOpRe, .IsZvec');
+            const titleEl = $(el).find('h3, .LC20lb, .qrShPb');
+            const linkEl = $(el).find('a[href^="http"], a.l, cite.iUh30, .qLRx3b, span.dyjrff');
+            const snippetEl = $(el).find('.st, .aCOpRe, .IsZvec, .s3v9rd, .IThcWe');
             
             if (titleEl.length && linkEl.length) {
               const title = titleEl.text().trim();
@@ -516,47 +622,205 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
           console.error(`Method 2 error for page ${page}: ${error}`);
           return false;
         }
+      },
+      
+      // Method 3: Use mobile Google to avoid some rate limiting
+      async (page: number, retryAttempt = 0): Promise<boolean> => {
+        try {
+          // Use longer delays for mobile approach
+          const jitter = Math.random() * 2000 - 1000;
+          const baseDelay = 3500 + (retryAttempt * 2500) + jitter;
+          await randomDelay(baseDelay, baseDelay + 5000);
+          
+          const formattedQuery = encodeURIComponent(query);
+          const start = page * 10;
+          
+          // Mobile search URL with parameters
+          let url = `https://www.google.com/search?q=${formattedQuery}&start=${start}&ie=UTF-8`;
+          
+          // Add various mobile-specific parameters
+          const mobileParams = [
+            'source=mobile',
+            'inm=vs',
+            'vet=12ahUKEwiOi6Dj8' + Math.floor(Math.random() * 1000) + Math.random().toString(36).substring(2, 6) + '.ZWI4ZWtjaxIQbGVhcyBnLU1BVHJ',
+            'ei=' + Math.random().toString(36).substring(2, 10),
+            'oq=' + formattedQuery, 
+            'gs_lcp=Cg' + Math.floor(Math.random() * 10) + 'BAxMA' + Math.random().toString(36).substring(2, 6)
+          ];
+          
+          url += `&${mobileParams.join('&')}`;
+          
+          // Cache busting
+          const cacheBuster = Date.now() + Math.floor(Math.random() * 100000);
+          url += `&sclient=mobile-gws-wiz-serp&cs=${cacheBuster}`;
+          
+          // Pick a mobile user agent
+          const mobileUserAgents = [
+            'Mozilla/5.0 (iPhone; CPU iPhone OS 15_6_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.6 Mobile/15E148 Safari/604.1',
+            'Mozilla/5.0 (Linux; Android 12; SM-G998B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36',
+            'Mozilla/5.0 (iPhone; CPU iPhone OS 16_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/112.0.5615.46 Mobile/15E148 Safari/604.1',
+            'Mozilla/5.0 (Linux; Android 13; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36',
+            'Mozilla/5.0 (iPad; CPU OS 16_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.4 Mobile/15E148 Safari/604.1'
+          ];
+          
+          const mobileUA = mobileUserAgents[Math.floor(Math.random() * mobileUserAgents.length)];
+          
+          // Mobile-specific headers
+          const headers = {
+            'User-Agent': mobileUA,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': Math.random() > 0.5 ? 'keep-alive' : 'close',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            // Mobile-specific headers
+            'X-Requested-With': 'XMLHttpRequest',
+            'Save-Data': Math.random() > 0.5 ? 'on' : undefined,
+            'Viewport-Width': String(375 + Math.floor(Math.random() * 50)),
+            'Width': String(375 + Math.floor(Math.random() * 50))
+          };
+          
+          // Timeout for mobile
+          const timeout = 30000 + Math.floor(Math.random() * 10000);
+          
+          const response = await axios.get(url, {
+            headers,
+            timeout,
+            validateStatus: (status) => status < 500
+          });
+          
+          if (response.status === 429 || response.status === 403) {
+            console.log(`Rate limit hit (${response.status}) - trying alternative method`);
+            
+            if (await exponentialBackoff(retryAttempt, 7000, 2)) {
+              return await scrapingMethods[2](page, retryAttempt + 1);
+            }
+            
+            return false;
+          }
+          
+          const $ = cheerio.load(response.data);
+          let resultsFound = 0;
+          
+          // Mobile selectors are different
+          $('.Ww4FFb, .xpd, .mnr-c, .g, .YiHbdc, [data-sokoban-container]').each((i, el) => {
+            if (allResults.length >= limit) return false;
+            
+            // Mobile-specific selectors
+            const titleEl = $(el).find('div[role="heading"], .kWxLod, .BVG0Nb, .s3v9rd');
+            const linkEl = $(el).find('a[href^="http"], a[data-jsarwt="1"], a.cz3goc');
+            const snippetEl = $(el).find('.UMy8j, .s3v9rd, .nKbPrd, .qkunPe, .VbtNib');
+            
+            if (titleEl.length && linkEl.length) {
+              const title = titleEl.text().trim();
+              let link = linkEl.attr('href') || '';
+              
+              // Clean up mobile redirect URLs
+              if (link.includes('/url?')) {
+                try {
+                  const urlObj = new URL(link.startsWith('http') ? link : `https://www.google.com${link}`);
+                  const actualUrl = urlObj.searchParams.get('q') || urlObj.searchParams.get('url');
+                  if (actualUrl) link = actualUrl;
+                } catch (e) {
+                  // Use original
+                }
+              }
+              
+              const snippet = snippetEl.text().trim();
+              
+              // Skip invalid links
+              if (!link || !link.startsWith('http')) return;
+              if (!title || !link) return;
+              if (allResults.some(result => result.link === link)) return;
+              
+              allResults.push({
+                title,
+                link,
+                snippet,
+                position: allResults.length + 1
+              });
+              
+              resultsFound++;
+            }
+          });
+          
+          return resultsFound > 0;
+        } catch (error) {
+          console.error(`Method 3 error for page ${page}: ${error}`);
+          return false;
+        }
       }
     ];
     
-    // Try to get results using multiple methods and pages - with early exit optimizations
+    // Try to get results using multiple methods and pages - with enhanced early exit optimizations
     let methodIndex = 0;
     let totalPages = 0;
     let success = false;
     
-    // Default to a lower target for faster results
-    const targetResultCount = Math.min(limit, 50); // Aim for 50 results initially
+    // More aggressive early exit conditions for faster results
+    // Lower target for faster initial response, especially in rate-limited scenarios
+    const targetResultCount = Math.min(limit, 30); // Aim for just 30 results initially
     
-    while (allResults.length < targetResultCount && totalPages < 6) {
-      const method = scrapingMethods[methodIndex % scrapingMethods.length];
-      const page = Math.floor(totalPages / 2); // Each method gets consecutive page numbers
+    // Determine the number of methods for rotation
+    const methodCount = scrapingMethods.length;
+    
+    while (allResults.length < targetResultCount && totalPages < 9) { // Try up to 9 pages total (3 per method)
+      // Rotate between methods more effectively
+      const methodToUse = methodIndex % methodCount;
+      const method = scrapingMethods[methodToUse];
       
-      console.log(`Trying scraping method ${methodIndex % scrapingMethods.length + 1}, page ${page + 1}`);
+      // Each method gets its own sequence of page numbers
+      const page = Math.floor(totalPages / methodCount);
+      
+      console.log(`Trying scraping method ${methodToUse + 1}, page ${page + 1}`);
       success = await method(page);
       
       // Rotate methods whether successful or not
       methodIndex++;
       totalPages++;
       
-      // Quick exit conditions to speed up response time:
-      
-      // 1. If we have at least 10 results after trying both methods once, exit early
-      if (totalPages >= 2 && allResults.length >= 10) {
-        console.log(`Found ${allResults.length} results quickly - returning early for better UX`);
+      // Very early exit if we can't get any results after 6 attempts
+      if (totalPages >= 6 && allResults.length === 0) {
+        console.log(`No results found after ${totalPages} attempts - giving up`);
         break;
       }
       
-      // 2. If we have at least 25 results after trying both methods twice, that's good enough
-      if (totalPages >= 4 && allResults.length >= 25) {
-        console.log(`Found ${allResults.length} results - sufficient quantity for analysis`);
+      // Enhanced quick exit conditions:
+      
+      // 1. If we have at least 5 results from any method, exit very early
+      if (allResults.length >= 5 && totalPages >= 2) {
+        console.log(`Found ${allResults.length} results quickly - returning very early for better UX`);
         break;
       }
       
-      // Brief pause between requests
-      await randomDelay(1000, 3000);
+      // 2. If we have at least 15 results after trying multiple methods, that's good enough
+      if (allResults.length >= 15 && totalPages >= 3) {
+        console.log(`Found ${allResults.length} results - sufficient quantity for initial analysis`);
+        break;
+      }
+      
+      // 3. If we have at least 30 results at any point, that's plenty
+      if (allResults.length >= 30) {
+        console.log(`Found ${allResults.length} results - optimal quantity for analysis`);
+        break;
+      }
+      
+      // Varied pause between requests
+      const pauseDuration = 1000 + Math.floor(Math.random() * 3000) + (methodToUse * 500);
+      await randomDelay(pauseDuration, pauseDuration + 2000);
     }
     
     console.log(`Scraped ${allResults.length} Google results for "${query}" after ${totalPages} page attempts`);
+    
+    // Cache the results if we found anything useful
+    if (allResults.length > 0) {
+      cacheResults(cacheKey, allResults);
+    }
+    
     return allResults;
   } catch (error) {
     console.error(`Error in Google scraping coordinator: ${error}`);
