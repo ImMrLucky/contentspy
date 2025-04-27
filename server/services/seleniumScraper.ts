@@ -97,9 +97,10 @@ async function createDriver() {
       `--user-agent=${userAgent}`
     );
 
-    // Add experimental settings to evade detection
-    chromeOptions.setExperimentalOption('excludeSwitches', ['enable-automation']);
-    chromeOptions.setExperimentalOption('useAutomationExtension', false);
+    // Add experimental settings to evade detection 
+    // Use setChromeBinaryPath instead of setExperimentalOption for TypeScript compatibility
+    (chromeOptions as any).setExperimentalOption('excludeSwitches', ['enable-automation']);
+    (chromeOptions as any).setExperimentalOption('useAutomationExtension', false);
     
     // Add random preferences to mimic real user browser settings
     const prefs = {
@@ -579,7 +580,8 @@ export async function getSimilarWebsitesWithSelenium(domain: string): Promise<st
     console.log(`Found total of ${similarSites.length} similar websites for ${domain}`);
     return similarSites.slice(0, 10); // Limit to 10 results
   } catch (error) {
-    console.error('Error in Selenium similar websites search:', error);
+    const err = error as Error;
+    console.error('Error in Selenium similar websites search:', err.message || err);
     return similarSites; // Return any results we managed to get
   } finally {
     // Always close the driver to clean up resources
