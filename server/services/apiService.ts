@@ -14,6 +14,10 @@ import {
   scrapeGoogleWithHttp,
   getSimilarWebsitesWithHttp
 } from './httpScraper';
+import {
+  scrapeGoogleWithSerpApi,
+  getSimilarWebsitesWithSerpApi
+} from './serpApiScraper';
 // Import default export from free-proxy
 import ProxyList from 'free-proxy';
 
@@ -493,8 +497,29 @@ export const extractDomain = (url: string): string => {
 // Get similar websites using module with fallback
 export const getSimilarWebsites = async (domain: string): Promise<string[]> => {
   try {
+    // First try using SerpAPI (most reliable method as it bypasses CAPTCHA)
+    if (process.env.SERPAPI_KEY) {
+      try {
+        console.log(`Using SerpAPI to find similar websites for: ${domain}`);
+        const serpResults = await getSimilarWebsitesWithSerpApi(domain);
+        
+        if (serpResults && serpResults.length > 0) {
+          console.log(`SerpAPI found ${serpResults.length} similar websites for ${domain}`);
+          return serpResults;
+        } else {
+          console.log(`SerpAPI returned 0 similar websites, trying fallback methods`);
+        }
+      } catch (serpError) {
+        console.error(`Error in SerpAPI for similar websites: ${serpError}`);
+        console.log(`Falling back to other methods...`);
+      }
+    } else {
+      console.log(`No SERPAPI_KEY found, trying other methods to find similar websites...`);
+    }
+    
+    // Try headless browser next
     try {
-      // First attempt with the imported headless browser function
+      console.log(`Trying headless browser for similar websites to: ${domain}`);
       const results = await getSimilarWebsitesWithHeadlessBrowser(domain);
       if (results && results.length > 0) {
         return results;
@@ -504,7 +529,8 @@ export const getSimilarWebsites = async (domain: string): Promise<string[]> => {
       console.log(`Falling back to HTTP scraping for similar websites...`);
     }
     
-    // Fallback to HTTP scraper if headless browser fails (imported at the top)
+    // Fallback to HTTP scraper as last resort
+    console.log(`Trying HTTP scraping for similar websites to: ${domain}`);
     return await getSimilarWebsitesWithHttp(domain);
   } catch (error) {
     console.error(`Error getting similar websites: ${error}`);
@@ -617,10 +643,33 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
       return cachedResults;
     }
     
-    console.log(`No cached results found. Using headlessBrowser module for Google scraping...`);
+    console.log(`No cached results found. First trying SerpAPI for reliable results...`);
     
+    // First, try using SerpAPI (most reliable method as it bypasses CAPTCHA)
+    if (process.env.SERPAPI_KEY) {
+      try {
+        console.log(`Using SerpAPI for query: "${query}"`);
+        const serpResults = await scrapeGoogleWithSerpApi(query, limit);
+        
+        // Cache results if we found any
+        if (serpResults.length > 0) {
+          console.log(`SerpAPI succeeded with ${serpResults.length} results`);
+          cacheResults(cacheKey, serpResults);
+          return serpResults;
+        } else {
+          console.log(`SerpAPI returned 0 results, trying fallback methods`);
+        }
+      } catch (serpError) {
+        console.error(`Error in SerpAPI scraping: ${serpError}`);
+        console.log(`Falling back to other scraping methods...`);
+      }
+    } else {
+      console.log(`No SERPAPI_KEY found, trying other scraping methods...`);
+    }
+    
+    // If SerpAPI fails or isn't available, try headless browser
     try {
-      // First try using the headless browser (import already at the top of the file)
+      console.log(`Trying headless browser for Google scraping...`);
       const results = await scrapeGoogleWithHeadlessBrowser(query, limit);
       
       // Cache results if we found any
@@ -634,7 +683,7 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
       
       // If the headless browser fails, try using HTTP scraper
       try {
-        // Using the imported function from httpScraper
+        console.log(`Trying HTTP scraper fallback...`);
         const httpResults = await scrapeGoogleWithHttp(query, limit);
         
         // Cache results if we found any
@@ -649,6 +698,7 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
       }
     }
     
+    console.log(`All scraping methods failed, returning empty results`);
     return [];
   } catch (error) {
     console.error(`Error in Google scraping: ${error}`);
