@@ -7,11 +7,19 @@ import {
   processCompetitorContent,
   generateInsights,
   generateRecommendations,
-  extractDomain
+  extractDomain,
+  ensureProxiesInitialized
 } from "./services/apiService";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
+  
+  // Initialize proxy rotation system in the background
+  setTimeout(() => {
+    ensureProxiesInitialized()
+      .then(() => console.log('Proxy rotation system initialized successfully'))
+      .catch(err => console.error('Failed to initialize proxy rotation system:', err));
+  }, 2000); // Slight delay after server startup
 
   // API endpoint to analyze a website
   app.post("/api/analyze", async (req: Request, res: Response) => {

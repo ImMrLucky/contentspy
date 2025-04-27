@@ -509,6 +509,15 @@ export const findCompetitorDomains = async (domain: string, limit = 10, keywords
 };
 
 // Web scrape search results directly from Google
+// Ensure proxy list is initialized before making requests
+// Export this so it can be called when the server starts
+export const ensureProxiesInitialized = async (): Promise<void> => {
+  if (availableProxies.length === 0 && !isInitializingProxies) {
+    console.log('No proxies available, initializing proxy list...');
+    await refreshProxyList();
+  }
+};
+
 export const scrapeGoogleSearchResults = async (query: string, limit = 200): Promise<any[]> => {
   try {
     console.log(`Scraping Google search results for: ${query}`);
@@ -520,6 +529,9 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
       console.log(`Using cached results for query: ${query}`);
       return cachedResults;
     }
+    
+    // Initialize our proxy list if needed
+    await ensureProxiesInitialized();
     
     // We need to make multiple requests to get 200 results (Google shows 100 max per page)
     const allResults: any[] = [];
@@ -587,20 +599,57 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
           // Randomize timeout between 25-40 seconds
           const timeout = 25000 + Math.floor(Math.random() * 15000);
           
-          const response = await axios.get(finalUrl, {
+          // Create combined config with our reqConfig containing proxy if available
+          const combinedConfig = {
+            ...reqConfig,
             headers,
             timeout,
-            validateStatus: (status) => status < 500 // Accept any status < 500 
-          });
+            validateStatus: (status) => status < 500 // Accept any status < 500
+          };
           
-          if (response.status === 429 || response.status === 403) {
-            console.log(`Rate limit hit (${response.status}) - trying alternative method`);
+          // Grab the proxy reference if it exists
+          const proxyRef = reqConfig._proxy;
+          
+          let response;
+          try {
+            response = await axios.get(finalUrl, combinedConfig);
             
-            // Try exponential backoff and retry if we have attempts left
+            if (response.status === 429 || response.status === 403) {
+              console.log(`Rate limit hit (${response.status}) - trying alternative method`);
+              
+              // Mark proxy as failed if we're using one
+              if (proxyRef) {
+                markProxyAsFailed(proxyRef);
+                console.log(`Marked proxy as failed: ${proxyRef.host}:${proxyRef.port}`);
+              }
+              
+              // Try exponential backoff and retry if we have attempts left
+              if (await exponentialBackoff(retryAttempt, 5000, 2)) {
+                return await scrapingMethods[0](page, retryAttempt + 1);
+              }
+              
+              return false;
+            }
+          
+            // If we get here, the proxy worked well
+            
+          } catch (error) {
+            // If there was a connection error, mark the proxy as failed
+            if (proxyRef) {
+              markProxyAsFailed(proxyRef);
+              console.log(`Marked proxy as failed due to connection error: ${proxyRef.host}:${proxyRef.port}`);
+            }
+            
+            // Try another attempt with exponential backoff
             if (await exponentialBackoff(retryAttempt, 5000, 2)) {
               return await scrapingMethods[0](page, retryAttempt + 1);
             }
             
+            return false;
+          }
+          
+          // If we don't have a successful response, return false
+          if (!response || !response.data) {
             return false;
           }
           
@@ -717,20 +766,54 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
           // Randomize timeout between 20-35 seconds
           const timeout = 20000 + Math.floor(Math.random() * 15000);
           
-          const response = await axios.get(url, {
+          // Combined config with proxy support
+          const combinedConfig = {
+            ...reqConfig,
             headers,
             timeout,
-            validateStatus: (status) => status < 500
-          });
+            validateStatus: (status: number) => status < 500
+          };
           
-          if (response.status === 429 || response.status === 403) {
-            console.log(`Rate limit hit (${response.status}) - trying alternative method`);
+          // Get proxy reference if available
+          const proxyRef = reqConfig._proxy;
+          
+          let response;
+          try {
+            response = await axios.get(url, combinedConfig);
             
-            // Try exponential backoff and retry with longer delays
+            if (response.status === 429 || response.status === 403) {
+              console.log(`Rate limit hit (${response.status}) - trying alternative method`);
+              
+              // Mark proxy as failed if we're using one
+              if (proxyRef) {
+                markProxyAsFailed(proxyRef);
+                console.log(`Marked proxy as failed: ${proxyRef.host}:${proxyRef.port}`);
+              }
+              
+              // Try exponential backoff and retry with longer delays
+              if (await exponentialBackoff(retryAttempt, 6000, 2)) {
+                return await scrapingMethods[1](page, retryAttempt + 1);
+              }
+              
+              return false;
+            }
+          } catch (error) {
+            // If there was a connection error, mark the proxy as failed
+            if (proxyRef) {
+              markProxyAsFailed(proxyRef);
+              console.log(`Marked proxy as failed due to connection error: ${proxyRef.host}:${proxyRef.port}`);
+            }
+            
+            // Try another attempt with exponential backoff
             if (await exponentialBackoff(retryAttempt, 6000, 2)) {
               return await scrapingMethods[1](page, retryAttempt + 1);
             }
             
+            return false;
+          }
+          
+          // If no valid response, return false
+          if (!response || !response.data) {
             return false;
           }
           
@@ -856,19 +939,55 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
           // Timeout for mobile
           const timeout = 30000 + Math.floor(Math.random() * 10000);
           
-          const response = await axios.get(url, {
+          // Get request config with mobile-optimized parameters
+          const reqConfig = getRequestConfig(retryAttempt + 10); // Use a different set than methods 1 and 2
+          
+          // Create combined config with our reqConfig containing proxy if available
+          const combinedConfig = {
+            ...reqConfig,
             headers,
             timeout,
-            validateStatus: (status) => status < 500
-          });
+            validateStatus: (status: number) => status < 500
+          };
           
-          if (response.status === 429 || response.status === 403) {
-            console.log(`Rate limit hit (${response.status}) - trying alternative method`);
+          // Grab the proxy reference if it exists
+          const proxyRef = reqConfig._proxy;
+          
+          let response;
+          try {
+            response = await axios.get(url, combinedConfig);
+            
+            if (response.status === 429 || response.status === 403) {
+              console.log(`Rate limit hit (${response.status}) - trying alternative method`);
+              
+              // Mark proxy as failed if we're using one
+              if (proxyRef) {
+                markProxyAsFailed(proxyRef);
+                console.log(`Marked proxy as failed: ${proxyRef.host}:${proxyRef.port}`);
+              }
+              
+              if (await exponentialBackoff(retryAttempt, 7000, 2)) {
+                return await scrapingMethods[2](page, retryAttempt + 1);
+              }
+              
+              return false;
+            }
+          } catch (error) {
+            // If there was a connection error, mark the proxy as failed
+            if (proxyRef) {
+              markProxyAsFailed(proxyRef);
+              console.log(`Marked proxy as failed due to connection error: ${proxyRef.host}:${proxyRef.port}`);
+            }
             
             if (await exponentialBackoff(retryAttempt, 7000, 2)) {
               return await scrapingMethods[2](page, retryAttempt + 1);
             }
             
+            return false;
+          }
+          
+          // If no valid response, return false
+          if (!response || !response.data) {
             return false;
           }
           
