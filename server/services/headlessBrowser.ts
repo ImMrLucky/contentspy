@@ -136,14 +136,15 @@ async function setupAntiDetection(page: puppeteer.Page) {
     const originalGetContext = HTMLCanvasElement.prototype.getContext;
     HTMLCanvasElement.prototype.getContext = function(type: string, ...args: any[]) {
       const context = originalGetContext.apply(this, [type, ...args]);
-      if (type === '2d') {
-        const originalFillText = context.fillText;
-        context.fillText = function(...args: any[]) {
+      if (type === '2d' && context) {
+        const ctx = context as CanvasRenderingContext2D;
+        const originalFillText = ctx.fillText;
+        ctx.fillText = function(...args: any[]) {
           return originalFillText.apply(this, args);
         };
         
-        const originalGetImageData = context.getImageData;
-        context.getImageData = function(...args: any[]) {
+        const originalGetImageData = ctx.getImageData;
+        ctx.getImageData = function(...args: any[]) {
           return originalGetImageData.apply(this, args);
         };
       }
@@ -217,17 +218,46 @@ export const scrapeGoogleWithHeadlessBrowser = async (query: string, limit = 200
     // Create a URL with decreased risk of triggering CAPTCHA
     const safeQuery = encodeURIComponent(query);
     
-    // Navigate to first page of results
-    const initialUrl = `https://www.google.com/search?q=${safeQuery}&hl=en&gl=us&num=${resultsPerPage}&safe=active`;
-    console.log(`Navigating to: ${initialUrl}`);
-    
-    await page.goto(initialUrl, { waitUntil: 'networkidle2' });
+    // Use a more stealthy approach - navigate to Google homepage first
+    try {
+      // First navigate to Google homepage to establish a normal session
+      console.log(`Navigating to Google homepage first...`);
+      await page.goto('https://www.google.com', { waitUntil: 'networkidle2' });
+      
+      // Add a short delay to mimic human behavior
+      await randomDelay(1000, 2000);
+      
+      // Now perform search from the homepage
+      console.log(`Entering search query: "${query}"`);
+      await page.type('input[name="q"]', query);
+      
+      // Short delay before pressing Enter
+      await randomDelay(500, 1500);
+      
+      // Press Enter and wait for results
+      await Promise.all([
+        page.waitForNavigation({ waitUntil: 'networkidle2' }),
+        page.keyboard.press('Enter')
+      ]);
+    } catch (navigationError) {
+      console.error(`Error during stealthy navigation: ${navigationError}`);
+      console.log(`Trying direct URL approach instead...`);
+      
+      // If stealthy approach fails, use direct URL as fallback
+      const initialUrl = `https://www.google.com/search?q=${safeQuery}&hl=en&gl=us&num=${resultsPerPage}&safe=active`;
+      console.log(`Navigating to: ${initialUrl}`);
+      await page.goto(initialUrl, { waitUntil: 'networkidle2' });
+    }
     
     // Check if we got a CAPTCHA
     const isCaptcha = await page.evaluate(() => {
       return document.title.includes('unusual traffic') || 
+             document.title.includes('CAPTCHA') ||
              document.querySelector('form#captcha-form') !== null ||
-             document.querySelector('div:contains("captcha")') !== null;
+             document.querySelector('div#recaptcha') !== null ||
+             document.querySelector('div[class*="recaptcha"]') !== null ||
+             document.body.innerText.includes('unusual traffic from your computer network') ||
+             document.body.innerText.includes('solve the above CAPTCHA');
     });
     
     if (isCaptcha) {
@@ -399,19 +429,54 @@ export const getSimilarWebsitesWithHeadlessBrowser = async (domain: string): Pro
     for (const query of competitorQueries) {
       if (similarSites.length >= 15) break;
       
-      // Search for the query on Google
+      // Use stealthy approach for competitor search too
       console.log(`Searching for: "${query}"`);
-      const safeQuery = encodeURIComponent(query);
-      const searchUrl = `https://www.google.com/search?q=${safeQuery}&hl=en&gl=us&num=20`;
       
-      // Navigate to search results
-      await page.goto(searchUrl, { waitUntil: 'networkidle2' });
+      try {
+        // First navigate to Google homepage
+        await page.goto('https://www.google.com', { waitUntil: 'networkidle2' });
+        
+        // Add a short delay to mimic human behavior
+        await randomDelay(1000, 2000);
+        
+        // Clear any existing text in search box
+        await page.evaluate(() => {
+          const input = document.querySelector('input[name="q"]');
+          if (input) (input as HTMLInputElement).value = '';
+        });
+        
+        // Now perform search from the homepage
+        await page.type('input[name="q"]', query);
+        
+        // Short delay before pressing Enter
+        await randomDelay(500, 1500);
+        
+        // Press Enter and wait for results
+        await Promise.all([
+          page.waitForNavigation({ waitUntil: 'networkidle2' }),
+          page.keyboard.press('Enter')
+        ]);
+      } catch (navigationError) {
+        console.error(`Error during stealthy competitor search: ${navigationError}`);
+        console.log(`Trying direct URL approach instead...`);
+        
+        // If stealthy approach fails, use direct URL as fallback
+        const safeQuery = encodeURIComponent(query);
+        const searchUrl = `https://www.google.com/search?q=${safeQuery}&hl=en&gl=us&num=20`;
+        
+        // Navigate to search results
+        await page.goto(searchUrl, { waitUntil: 'networkidle2' });
+      }
       
-      // Check if we got a CAPTCHA
+      // Check if we got a CAPTCHA using enhanced detection
       const isCaptcha = await page.evaluate(() => {
         return document.title.includes('unusual traffic') || 
+               document.title.includes('CAPTCHA') ||
                document.querySelector('form#captcha-form') !== null ||
-               document.querySelector('div:contains("captcha")') !== null;
+               document.querySelector('div#recaptcha') !== null ||
+               document.querySelector('div[class*="recaptcha"]') !== null ||
+               document.body.innerText.includes('unusual traffic from your computer network') ||
+               document.body.innerText.includes('solve the above CAPTCHA');
       });
       
       if (isCaptcha) {
@@ -420,7 +485,7 @@ export const getSimilarWebsitesWithHeadlessBrowser = async (domain: string): Pro
       }
       
       // Extract domains from search results
-      const extractedDomains = await page.evaluate((targetDomain) => {
+      const extractedDomains = await page.evaluate((targetDomain: string) => {
         const domains: string[] = [];
         
         // Get all links on the page
