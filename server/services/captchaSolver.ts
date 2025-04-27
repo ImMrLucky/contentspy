@@ -229,7 +229,7 @@ export async function solveCaptcha(page: Page): Promise<boolean> {
           const checkbox = await frameHandle.waitForSelector('div.recaptcha-checkbox-border', { timeout: 5000 });
           if (checkbox) {
             await checkbox.click();
-            await page.waitForTimeout(2000);
+            await delay(2000); // Using the delay function instead of waitForTimeout
             console.log('Clicked reCAPTCHA checkbox');
             
             // Check if we need to solve a challenge
@@ -260,7 +260,7 @@ export async function solveCaptcha(page: Page): Promise<boolean> {
           if (audioButton) {
             await audioButton.click();
             console.log('Clicked audio button');
-            await page.waitForTimeout(2000);
+            await delay(2000);
             
             // Check for an audio challenge
             const audioChallenge = await frame.$('audio#audio-source');
@@ -270,7 +270,7 @@ export async function solveCaptcha(page: Page): Promise<boolean> {
               console.log('Audio challenge detected but not implemented');
             }
           }
-        } catch (e) {
+        } catch (e: any) {
           // Continue checking other frames
         }
       }
@@ -283,11 +283,11 @@ export async function solveCaptcha(page: Page): Promise<boolean> {
       const notRobotButton = await page.$('button:contains("I\'m not a robot")');
       if (notRobotButton) {
         await notRobotButton.click();
-        await page.waitForTimeout(2000);
+        await delay(2000);
         console.log('Clicked "I\'m not a robot" button');
         return true;
       }
-    } catch (e) {
+    } catch (e: any) {
       console.log('No "not a robot" button found');
     }
 
@@ -296,7 +296,7 @@ export async function solveCaptcha(page: Page): Promise<boolean> {
       const verifyButton = await page.$('button#recaptcha-verify-button, button:contains("Verify")');
       if (verifyButton) {
         await verifyButton.click();
-        await page.waitForTimeout(2000);
+        await delay(2000);
         console.log('Clicked verification button');
       }
     } catch (e) {
@@ -378,7 +378,7 @@ export async function scrapeGoogleWithCaptchaSolver(query: string, limit = 200):
         }
         
         // Continue with new page if CAPTCHA is solved or not present
-        await newPage.waitForTimeout(1000);
+        await delay(1000);
         return await extractGoogleResults(newPage, limit);
       }
     }
@@ -420,16 +420,16 @@ async function extractGoogleResults(page: Page, limit: number): Promise<any[]> {
       });
       
       // Wait for potential new results to load
-      await page.waitForTimeout(1000);
+      await delay(1000);
       
       // Click "More results" button if it exists
       try {
         const moreButton = await page.$('input[value="More results"]');
         if (moreButton) {
           await moreButton.click();
-          await page.waitForTimeout(2000);
+          await delay(2000);
         }
-      } catch (e) {
+      } catch (e: any) {
         // No more results button, or it couldn't be clicked
       }
       
@@ -448,7 +448,14 @@ async function extractGoogleResults(page: Page, limit: number): Promise<any[]> {
     
     // Extract the results
     const results = await page.evaluate(() => {
-      const items = [];
+      const items: Array<{
+        position: number;
+        title: string;
+        link: string;
+        snippet: string;
+        source: string;
+      }> = [];
+      
       const resultElements = document.querySelectorAll('#search .g, #search [data-sokoban-container]');
       
       resultElements.forEach((el, position) => {
@@ -456,11 +463,11 @@ async function extractGoogleResults(page: Page, limit: number): Promise<any[]> {
         const linkElement = el.querySelector('a');
         const snippetElement = el.querySelector('.VwiC3b, .st');
         
-        if (titleElement && linkElement && linkElement.href) {
+        if (titleElement && linkElement && (linkElement as HTMLAnchorElement).href) {
           const item = {
             position: position + 1,
             title: titleElement.textContent || '',
-            link: linkElement.href,
+            link: (linkElement as HTMLAnchorElement).href,
             snippet: snippetElement ? snippetElement.textContent || '' : '',
             source: 'google-captcha-solver'
           };
@@ -484,7 +491,13 @@ async function extractGoogleResults(page: Page, limit: number): Promise<any[]> {
       console.log('Trying fallback extraction method...');
       
       const fallbackResults = await page.evaluate(() => {
-        const items = [];
+        const items: Array<{
+          position: number;
+          title: string;
+          link: string;
+          snippet: string;
+          source: string;
+        }> = [];
         
         // Try multiple potential selectors
         const linkSelectors = [
@@ -499,7 +512,7 @@ async function extractGoogleResults(page: Page, limit: number): Promise<any[]> {
           const links = document.querySelectorAll(selector);
           
           links.forEach((link, position) => {
-            const url = link.href;
+            const url = (link as HTMLAnchorElement).href;
             
             // Skip if not a valid URL or if it's a Google-internal link
             if (!url || url.includes('google.com') || items.some(item => item.link === url)) {

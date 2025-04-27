@@ -793,6 +793,7 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
     global.availableProxies = availableProxies;
     
     // Try CAPTCHA solver first (puppeteer-extra with stealth and recaptcha plugins)
+    // This is our most advanced method with the highest success rate against CAPTCHAs
     try {
       console.log(`Trying CAPTCHA solver for Google search: "${query}"`);
       // Dynamically require to avoid circular dependencies
