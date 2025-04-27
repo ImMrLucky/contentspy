@@ -792,28 +792,8 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
     // Make proxies available globally for Python and other scrapers
     global.availableProxies = availableProxies;
     
-    // Try CAPTCHA solver first (puppeteer-extra with stealth and recaptcha plugins)
-    // This is our most advanced method with the highest success rate against CAPTCHAs
-    try {
-      console.log(`Trying CAPTCHA solver for Google search: "${query}"`);
-      // Dynamically require to avoid circular dependencies
-      const { scrapeGoogleWithCaptchaSolver } = require('./captchaSolver');
-      const captchaResults = await scrapeGoogleWithCaptchaSolver(query, limit);
-      
-      // Cache results if we found any
-      if (captchaResults && captchaResults.length > 0) {
-        console.log(`CAPTCHA solver succeeded with ${captchaResults.length} results`);
-        cacheResults(cacheKey, captchaResults);
-        return captchaResults;
-      } else {
-        console.log(`CAPTCHA solver returned 0 results, trying Python scraper fallback...`);
-      }
-    } catch (captchaError) {
-      console.error(`Error in CAPTCHA solver: ${captchaError}`);
-      console.log(`Falling back to Python scraper method...`);
-    }
-    
-    // Try Python-based scraper second (requests-html + pyppeteer, also effective against CAPTCHA)
+    // Due to technical limitations, we'll no longer use the CAPTCHA solver directly
+    // Try Python-based scraper first (requests-html + pyppeteer, most effective against CAPTCHA)
     try {
       console.log(`Trying Python scraper with requests-html and pyppeteer: "${query}"`);
       const pythonResults = await scrapeGoogleWithPython(query, limit);
@@ -860,28 +840,78 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
         cacheResults(cacheKey, httpResults);
         return httpResults;
       } else {
-        console.log(`Enhanced HTTP scraper returned 0 results, trying Selenium as last resort...`);
+        console.log(`Enhanced HTTP scraper returned 0 results, trying without proxies...`);
       }
     } catch (httpError) {
       console.error(`Error in enhanced HTTP scraping: ${httpError}`);
-      console.log(`Falling back to Selenium as last resort...`);
+      console.log(`Falling back to direct HTTP requests...`);
     }
     
-    // Try Selenium as last resort (moved from first to last as you requested)
+    // Try simplified direct HTTP method as last resort
     try {
-      console.log(`Trying Selenium as last resort for: "${query}"`);
-      const seleniumResults = await scrapeGoogleWithSelenium(query, limit);
+      console.log(`Trying direct HTTP request for: "${query}"`);
+      // Use node-fetch to make a direct simple request
+      const response = await fetch(`https://www.google.com/search?q=${encodeURIComponent(query)}&num=${limit}`, {
+        headers: {
+          'User-Agent': getRandomUserAgent(),
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.5',
+          'Referer': 'https://www.google.com/'
+        }
+      });
       
-      // Cache results if we found any
-      if (seleniumResults.length > 0) {
-        console.log(`Selenium succeeded with ${seleniumResults.length} results`);
-        cacheResults(cacheKey, seleniumResults);
-        return seleniumResults;
-      } else {
-        console.log(`Selenium returned 0 results`);
+      if (response.ok) {
+        const html = await response.text();
+        
+        try {
+          // Use regular expressions to extract search results
+          const directResults = [];
+          const linkPattern = /<a[^>]*href="(http[^"]+)"[^>]*>(.*?)<\/a>/gi;
+          let match;
+          let i = 0;
+          
+          while ((match = linkPattern.exec(html)) !== null && i < limit) {
+            const link = match[1];
+            const title = match[2].replace(/<[^>]+>/g, '') || '';
+            
+            // Skip Google internal links
+            if (link.includes('google.com')) {
+              continue;
+            }
+            
+            // Try to get snippet
+            let snippet = '';
+            const snippetPattern = new RegExp(`${title.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}[^<]*([^<]{20,200})`, 'i');
+            const snippetMatch = html.match(snippetPattern);
+            
+            if (snippetMatch) {
+              snippet = snippetMatch[1].trim();
+            }
+            
+            directResults.push({
+              position: i + 1,
+              title,
+              link,
+              snippet,
+              source: 'direct-http'
+            });
+            
+            i++;
+          }
+          
+          if (directResults.length > 0) {
+            console.log(`Direct HTTP succeeded with ${directResults.length} results`);
+            cacheResults(cacheKey, directResults);
+            return directResults;
+          }
+        } catch (parseError) {
+          console.error(`Error parsing direct HTTP results: ${parseError}`);
+        }
+        
+        console.log(`Direct HTTP returned 0 results`);
       }
-    } catch (seleniumError) {
-      console.error(`Error in Selenium Google scraping: ${seleniumError}`);
+    } catch (directError) {
+      console.error(`Error in direct HTTP scraping: ${directError}`);
     }
     
     console.log(`All scraping methods failed, returning empty results`);
