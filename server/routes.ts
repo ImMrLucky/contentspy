@@ -8,7 +8,8 @@ import {
   generateInsights,
   generateRecommendations,
   extractDomain,
-  ensureProxiesInitialized
+  ensureProxiesInitialized,
+  findCompetitorDomains
 } from "./services/apiService";
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -55,7 +56,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Process competitor content using real APIs
       console.log(`Starting competitor content analysis for ${domain}`);
-      const competitorResults = await processCompetitorContent(domain, analysis.id, keywords);
+      
+      // First find competitor domains
+      const competitorDomains = await findCompetitorDomains(domain, 10, keywords);
+      // Then process content from those domains
+      const competitorResults = await processCompetitorContent(domain, competitorDomains, keywords);
       
       // Store competitor content and keywords in database
       const storedResults = await Promise.all(
@@ -72,7 +77,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           // Store keywords for this content
           const storedKeywords = await Promise.all(
-            (result.keywords || []).map(async (keyword) => {
+            (result.keywords || []).map(async (keyword: string) => {
               return storage.createKeyword({
                 contentId: content.id,
                 keyword,

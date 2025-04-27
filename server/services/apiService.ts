@@ -1,20 +1,22 @@
+/**
+ * API Service - Provides functionality for scraping and analyzing content
+ */
+
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import natural from 'natural';
-import { CompetitorContent } from '@shared/schema';
-import { URL } from 'url';
 import { HttpProxyAgent } from 'http-proxy-agent';
-import FreeProxy from 'free-proxy';
-import puppeteer from 'puppeteer';
+import { scrapeGoogleWithHeadlessBrowser } from './headlessBrowser';
+// Import default export from free-proxy
+import ProxyList from 'free-proxy';
 
-// API Keys (Only using SimilarWeb now)
-const SIMILARWEB_API_KEY = process.env.SIMILARWEB_API_KEY || '05dbc8d629d24585947c0c0d4c521114';
+// For caching search results
+interface CacheEntry {
+  timestamp: number;
+  results: any[];
+}
 
-// Counter for emergency headless browser uses
-let emergencyBrowserFallbackCount = 0;
-const MAX_EMERGENCY_BROWSER_USES = 3; // Limit to prevent excessive resource use
-
-// Track proxies for rotation
+// Define proxy interface
 interface Proxy {
   host: string;
   port: number;
@@ -24,151 +26,111 @@ interface Proxy {
   country: string;
 }
 
-// Global proxy collection
-let availableProxies: Proxy[] = [];
+// Maps to hold proxies and cache
+const availableProxies: Proxy[] = [];
+const searchCache = new Map<string, CacheEntry>();
+
+// Constants for proxy management
+const CACHE_LIFETIME = 3600000; // 1 hour cache lifetime
+const PROXY_FETCH_INTERVAL = 1800000; // 30 minutes
 let lastProxyFetch = 0;
-const PROXY_FETCH_INTERVAL = 15 * 60 * 1000; // 15 minutes
 let isInitializingProxies = false;
 
-// Very simple in-memory cache for search results to prevent repeated identical requests
-interface CacheEntry {
-  timestamp: number;
-  results: any[];
-}
-
-// Cache with 1-hour expiration
-const searchResultsCache: Record<string, CacheEntry> = {};
-const CACHE_TTL = 60 * 60 * 1000; // 1 hour in milliseconds
-
-// Function to get cached results or undefined if not cached
-const getCachedResults = (cacheKey: string): any[] | undefined => {
-  const entry = searchResultsCache[cacheKey];
-  if (!entry) return undefined;
-  
-  // Check if cache entry is still valid
-  const now = Date.now();
-  if (now - entry.timestamp > CACHE_TTL) {
-    delete searchResultsCache[cacheKey];
-    return undefined;
-  }
-  
-  // Return cached results
-  return entry.results;
+// Utility function for random delay
+const randomDelay = (min: number, max: number): Promise<void> => {
+  const delay = min + Math.floor(Math.random() * (max - min));
+  return new Promise(resolve => setTimeout(resolve, delay));
 };
 
-// Function to cache search results
-const cacheResults = (cacheKey: string, results: any[]): void => {
-  searchResultsCache[cacheKey] = {
-    timestamp: Date.now(),
-    results
-  };
-};
-
-// Enhanced random delay function with more variability to avoid rate limits
-const randomDelay = async (min = 1000, max = 3000) => {
-  // Add a more natural distribution with occasional longer pauses
-  let delay;
-  const useExponentialDistribution = Math.random() < 0.3; // 30% chance of longer delay
-  
-  if (useExponentialDistribution) {
-    // Occasional longer delays that follow a more exponential distribution
-    const lambda = 1 / ((max - min) / 2);
-    delay = min + Math.floor(-Math.log(Math.random()) / lambda);
-    delay = Math.min(delay, max * 2); // Cap at 2x max to avoid extreme outliers
-  } else {
-    // Normal uniform distribution most of the time
-    delay = Math.floor(Math.random() * (max - min + 1)) + min;
-  }
-  
-  // Add subtle randomized sub-second variations to appear more human-like
-  const microDelay = Math.random() * 100;
-  return new Promise(resolve => setTimeout(resolve, delay + microDelay));
-};
-
-// Significantly improved exponential backoff with better jitter and human-like variability
-const exponentialBackoff = async (attempt = 0, baseDelay = 5000, maxAttempts = 3): Promise<boolean> => {
+// Utility function for exponential backoff with full jitter
+const exponentialBackoff = async (attempt: number, baseDelay: number, factor = 2, maxAttempts = 5): Promise<boolean> => {
   if (attempt >= maxAttempts) return false;
   
-  // Full jitter exponential backoff algorithm (AWS recommendation)
-  // This spreads out retry call distribution and reduces server load spikes
-  const expDelay = baseDelay * Math.pow(2, attempt);
-  const jitterFactor = Math.random(); // Between 0 and 1
-  const delay = Math.floor(expDelay * jitterFactor);
+  // Calculate exponential delay with full jitter
+  const maxDelay = baseDelay * Math.pow(factor, attempt);
+  const delay = Math.floor(Math.random() * maxDelay);
   
-  // Add human-like random additions (people don't wait for exactly X seconds)
-  const humanFactor = Math.floor(Math.random() * 1000); // 0-1000ms extra
-  const totalDelay = delay + humanFactor;
+  console.log(`Exponential backoff: Attempt ${attempt + 1}/${maxAttempts}, waiting ${delay}ms`);
+  await new Promise(resolve => setTimeout(resolve, delay));
   
-  console.log(`Rate limit encountered. Backing off for ${Math.round(totalDelay / 1000)} seconds (attempt ${attempt + 1}/${maxAttempts})...`);
-  await new Promise(resolve => setTimeout(resolve, totalDelay));
   return true;
 };
 
-// Extended user agents list with even more variations for better rotation
+// Utility function to cache search results
+const cacheResults = (key: string, results: any[]): void => {
+  searchCache.set(key, {
+    timestamp: Date.now(),
+    results: [...results]
+  });
+};
+
+// Utility function to get cached results
+const getCachedResults = (key: string): any[] | null => {
+  const entry = searchCache.get(key);
+  if (!entry) return null;
+  
+  // Check if cache is still valid
+  if (Date.now() - entry.timestamp < CACHE_LIFETIME) {
+    return [...entry.results];
+  }
+  
+  // Cache expired, remove it
+  searchCache.delete(key);
+  return null;
+};
+
+// List of user agents to rotate
 const USER_AGENTS = [
-  // Chrome - Latest versions with different OS platforms
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36',
-  
-  // Firefox - Various versions
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/109.0',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:115.0) Gecko/20100101 Firefox/115.0',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:119.0) Gecko/20100101 Firefox/119.0',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/109.0',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:115.0) Gecko/20100101 Firefox/115.0',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:118.0) Gecko/20100101 Firefox/118.0',
-  'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/109.0',
-  'Mozilla/5.0 (X11; Linux x86_64; rv:115.0) Gecko/20100101 Firefox/115.0',
-  'Mozilla/5.0 (X11; Linux x86_64; rv:119.0) Gecko/20100101 Firefox/119.0',
-  
-  // Safari - Different versions
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.6 Safari/605.1.15',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Safari/605.1.15',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/118.0',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/117.0',
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
-  
-  // Edge
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36 Edg/116.0.1938.62',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36 Edg/117.0.2045.47',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/118.0',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36 Edg/118.0.2088.46',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/117.0',
+  'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/118.0',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36 Edg/117.0.2045.60',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Edge/18.0',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36 OPR/102.0.0.0',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/118.0',
+  'Mozilla/5.0 (Windows NT 10.0; rv:109.0) Gecko/20100101 Firefox/118.0',
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36 Edg/118.0.2088.61',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36 Edg/116.0.1938.62',
-  
-  // Opera
+  'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/117.0',
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36 OPR/102.0.0.0',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36 OPR/103.0.0.0',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36 OPR/102.0.0.0',
-  
-  // Mobile
-  'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
-  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
-  'Mozilla/5.0 (iPad; CPU OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
-  'Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
-  'Mozilla/5.0 (Linux; Android 13; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36',
-  'Mozilla/5.0 (Linux; Android 13; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Mobile Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36 Edg/117.0.2045.47',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36 Edg/118.0.2088.57',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5.2 Safari/605.1.15',
+  'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/117.0',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/116.0',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36 Edg/118.0.2088.69',
+  'Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15 Edg/118.0.2088.76',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/116.0',
+  'Mozilla/5.0 (Windows NT 10.0; rv:109.0) Gecko/20100101 Firefox/119.0',
+  'Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.7113.93 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Linux; Android 13; SM-S901B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36',
   'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Mobile Safari/537.36',
   'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Mobile Safari/537.36'
 ];
 
 // Function to get a random user agent from the list
-const getRandomUserAgent = () => {
+export const getRandomUserAgent = () => {
   return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
 };
 
-// Initialize FreeProxy instance
-// @ts-ignore - The type definition might not match the actual implementation
-const freeProxyClient = new FreeProxy();
+// Initialize ProxyList instance
+const freeProxyClient = new ProxyList();
 
 // Function to refresh the proxy list
 const refreshProxyList = async (): Promise<void> => {
@@ -446,315 +408,172 @@ export const extractKeywords = (text: string, count = 5): string[] => {
   
   // Remove common stopwords
   const stopwords = ["a", "about", "an", "and", "are", "as", "at", "be", "by", "for", "from", "how", "in", "is", "it", "of", "on", "or", "that", "the", "this", "to", "was", "what", "when", "where", "who", "will", "with"];
-  const filteredTokens = tokens.filter(token => !stopwords.includes(token) && token.length > 2);
   
-  // Count occurrences
-  const wordFrequency: Record<string, number> = {};
+  const filteredTokens = tokens.filter(token => 
+    token.length > 2 && 
+    !stopwords.includes(token) &&
+    !/^\d+$/.test(token) // Skip pure numbers
+  );
+  
+  // Count occurrences of each token
+  const tokenCounts: {[key: string]: number} = {};
   filteredTokens.forEach(token => {
-    wordFrequency[token] = (wordFrequency[token] || 0) + 1;
+    tokenCounts[token] = (tokenCounts[token] || 0) + 1;
   });
   
   // Sort by frequency
-  const sortedWords = Object.entries(wordFrequency)
+  const sortedTokens = Object.entries(tokenCounts)
     .sort((a, b) => b[1] - a[1])
-    .map(entry => entry[0]);
+    .map(([token]) => token);
   
-  return sortedWords.slice(0, count);
+  // Return top N keywords
+  return sortedTokens.slice(0, count);
 };
 
-// Extract page content using web scraping
+// Scrape page content using Axios and Cheerio
 export const scrapePageContent = async (url: string): Promise<{ text: string, title: string }> => {
   try {
     const response = await axios.get(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-      }
+        'User-Agent': getRandomUserAgent(),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate, br'
+      },
+      timeout: 15000
     });
     
     const $ = cheerio.load(response.data);
     
-    // Remove script and style elements
-    $('script, style').remove();
+    // Remove script and style tags
+    $('script, style, iframe, noscript').remove();
     
     // Get page title
-    const title = $('title').text().trim() || $('h1').first().text().trim();
+    const title = $('title').text().trim() || $('h1').first().text().trim() || '';
     
-    // Get page text content
-    const text = $('body').text().replace(/\s+/g, ' ').trim();
+    // Get page content
+    const paragraphs: string[] = [];
+    $('p, article, .content, .post, .entry, .article, .blog, .main, main, section').each((_, el) => {
+      const text = $(el).text().trim();
+      if (text) paragraphs.push(text);
+    });
+    
+    // Join paragraphs with newlines
+    const text = paragraphs.join('\n');
     
     return { text, title };
   } catch (error) {
-    console.error(`Error scraping ${url}:`, error);
+    console.error(`Error scraping page content: ${error}`);
     return { text: '', title: '' };
   }
 };
 
-// Get domain from URL
+// Extract domain from URL
 export const extractDomain = (url: string): string => {
   try {
-    return new URL(url).hostname.replace('www.', '');
-  } catch (e) {
-    return '';
+    // Remove protocol and path, keep only domain
+    const domain = url.replace(/^https?:\/\//, '')  // Remove protocol
+                     .replace(/\/.*$/, '')         // Remove path
+                     .replace(/^www\./, '');       // Remove www
+    
+    return domain;
+  } catch (error) {
+    console.error(`Error extracting domain from ${url}: ${error}`);
+    return url;
   }
 };
 
-// Get similar websites using headless browser to search for "competitors of [domain]" and "sites like [domain]"
+// Get similar websites using module
 export const getSimilarWebsites = async (domain: string): Promise<string[]> => {
   try {
-    console.log(`Finding similar websites for domain: ${domain} using headless browser scraping`);
-    const domainName = domain.replace(/^www\./, '');
-    
-    // Create a list of search queries to find competitors
-    const competitorQueries = [
-      `competitors of ${domainName}`,
-      `sites like ${domainName}`,
-      `alternatives to ${domainName}`,
-      `companies similar to ${domainName}`
-    ];
-    
-    // Launch a headless browser
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-infobars',
-        '--window-position=0,0',
-        '--ignore-certificate-errors',
-        '--disable-extensions',
-        '--disable-dev-shm-usage'
-      ]
-    });
-    
-    try {
-      // Create a new browser page with random viewport
-      const page = await browser.newPage();
-      
-      // Set a random viewport size
-      const viewportSizes = [
-        { width: 1366, height: 768 },
-        { width: 1920, height: 1080 },
-        { width: 1536, height: 864 },
-        { width: 1440, height: 900 }
-      ];
-      const viewport = viewportSizes[Math.floor(Math.random() * viewportSizes.length)];
-      await page.setViewport(viewport);
-      
-      // Set user agent and other browser headers
-      await page.setUserAgent(getRandomUserAgent());
-      await page.setExtraHTTPHeaders({
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
-      });
-      
-      // Set cookies to bypass Google consent screen
-      await page.setCookie({
-        name: 'CONSENT',
-        value: 'YES+cb.20220321-17-p0.en+FX+119',
-        domain: '.google.com',
-      });
-      
-      const allCompetitors: string[] = [];
-      
-      // Try each competitor query, stop once we find enough results
-      for (const query of competitorQueries) {
-        if (allCompetitors.length >= 15) break;
-        
-        console.log(`Searching for: ${query}`);
-        
-        // Navigate to Google with the search query
-        const formattedQuery = encodeURIComponent(query);
-        await page.goto(`https://www.google.com/search?q=${formattedQuery}&num=30`, {
-          waitUntil: 'networkidle2',
-          timeout: 30000
-        });
-        
-        // Wait a moment to ensure page is loaded
-        await page.waitForTimeout(2000 + Math.floor(Math.random() * 2000));
-        
-        // Extract domain names from search results
-        const competitors = await page.evaluate((searchDomain) => {
-          const results: string[] = [];
-          
-          // Find all search result links
-          const links = Array.from(document.querySelectorAll('a[href^="http"]'));
-          
-          for (const link of links) {
-            try {
-              const href = link.getAttribute('href');
-              if (!href) continue;
-              
-              // Skip Google's own links and the domain we're analyzing
-              if (href.includes('google.com') || 
-                  href.includes(searchDomain)) continue;
-              
-              // Extract domain name
-              const url = new URL(href);
-              let domain = url.hostname.toLowerCase();
-              
-              // Remove www. prefix
-              domain = domain.replace(/^www\./, '');
-              
-              // Skip if already in results
-              if (results.includes(domain)) continue;
-              
-              results.push(domain);
-            } catch (e) {
-              // Skip invalid URLs
-              continue;
-            }
-          }
-          
-          return results;
-        }, domainName);
-        
-        console.log(`Found ${competitors.length} possible competitors from query: "${query}"`);
-        
-        // Add unique competitors to our list
-        for (const comp of competitors) {
-          if (!allCompetitors.includes(comp) && comp !== domainName) {
-            allCompetitors.push(comp);
-          }
-        }
-        
-        // Add a random delay between queries
-        await page.waitForTimeout(3000 + Math.floor(Math.random() * 5000));
-      }
-      
-      console.log(`Found a total of ${allCompetitors.length} competitor domains for ${domain}`);
-      return allCompetitors.slice(0, 15); // Return at most 15 domains
-      
-    } finally {
-      await browser.close();
-    }
+    const { getSimilarWebsitesWithHeadlessBrowser } = require('./headlessBrowser');
+    return await getSimilarWebsitesWithHeadlessBrowser(domain);
   } catch (error) {
-    console.error(`Error getting similar websites for ${domain}:`, error);
+    console.error(`Error getting similar websites: ${error}`);
     return [];
   }
 };
 
-// Find top competitor domains (not just search results)
+// Find competitor domains with optional keywords
 export const findCompetitorDomains = async (domain: string, limit = 10, keywords?: string): Promise<string[]> => {
   try {
-    console.log(`Finding direct competitors for domain: ${domain}`);
-    if (keywords) {
-      console.log(`Using additional keywords: ${keywords}`);
+    // Get base domain for searching
+    const baseDomain = extractDomain(domain);
+    
+    // First try to find similar websites directly - these often have the most relevant content
+    const similarSites = await getSimilarWebsites(baseDomain);
+    
+    if (similarSites.length >= limit) {
+      console.log(`Found ${similarSites.length} similar websites for ${baseDomain}`);
+      return similarSites.slice(0, limit);
     }
     
-    // Extract domain name without TLD
-    const domainName = domain.replace(/^www\./i, '').split('.')[0].toLowerCase();
+    // If we didn't get enough similar sites, search for related content with keywords
+    let allCompetitors = [...similarSites];
     
-    // Generate a custom list of industry-specific competitors based on the analyzed domain
-    // These should be actual competitors not content sites
-    const customIndustryCompetitors: Record<string, string[]> = {
-      // Tech and software
-      'tech': ['github.com', 'stackoverflow.com', 'digitalocean.com', 'atlassian.com', 'jetbrains.com', 'heroku.com', 'netlify.com', 'vercel.com', 'gitlab.com', 'bitbucket.org'],
-      'soft': ['microsoft.com', 'oracle.com', 'salesforce.com', 'sap.com', 'adobe.com', 'autodesk.com', 'vmware.com', 'intuit.com', 'zoho.com', 'freshworks.com'],
-      'code': ['github.com', 'gitlab.com', 'stackoverflow.com', 'bitbucket.org', 'codepen.io', 'replit.com', 'codesandbox.io', 'jsfiddle.net', 'leetcode.com', 'hackerrank.com'],
-      
-      // Retail and e-commerce
-      'shop': ['amazon.com', 'ebay.com', 'walmart.com', 'etsy.com', 'shopify.com', 'aliexpress.com', 'target.com', 'bestbuy.com', 'newegg.com', 'overstock.com'],
-      'store': ['amazon.com', 'ebay.com', 'walmart.com', 'target.com', 'bestbuy.com', 'macys.com', 'costco.com', 'wayfair.com', 'homedepot.com', 'lowes.com'],
-      
-      // Healthcare
-      'health': ['mayoclinic.org', 'nih.gov', 'webmd.com', 'cdc.gov', 'healthline.com', 'who.int', 'clevelandclinic.org', 'medlineplus.gov', 'hopkinsmedicine.org', 'drugs.com'],
-      'medical': ['mayoclinic.org', 'webmd.com', 'medscape.com', 'uptodate.com', 'healthline.com', 'drugs.com', 'rxlist.com', 'nih.gov', 'cdc.gov', 'aafp.org'],
-      'doctor': ['zocdoc.com', 'healthgrades.com', 'doximity.com', 'vitals.com', 'webmd.com', 'mayoclinic.org', 'everydayhealth.com', 'medicinenet.com', 'ratemds.com', 'md.com'],
-      
-      // Finance
-      'bank': ['chase.com', 'bankofamerica.com', 'wellsfargo.com', 'citibank.com', 'capitalone.com', 'usbank.com', 'pnc.com', 'tdbank.com', 'ally.com', 'discover.com'],
-      'finance': ['bankrate.com', 'nerdwallet.com', 'investopedia.com', 'fool.com', 'bloomberg.com', 'cnbc.com', 'wsj.com', 'reuters.com', 'kiplinger.com', 'moneyunder30.com'],
-      'invest': ['vanguard.com', 'fidelity.com', 'schwab.com', 'etrade.com', 'robinhood.com', 'tdameritrade.com', 'morningstar.com', 'interactivebrokers.com', 'webull.com', 'ml.com'],
-      
-      // Marketing
-      'market': ['hubspot.com', 'mailchimp.com', 'marketo.com', 'buffer.com', 'hootsuite.com', 'constantcontact.com', 'segment.com', 'moz.com', 'semrush.com', 'ahrefs.com'],
-      'seo': ['semrush.com', 'ahrefs.com', 'moz.com', 'searchenginejournal.com', 'serpstat.com', 'seranking.com', 'spyfu.com', 'rankmath.com', 'yoast.com', 'backlinko.com'],
-      
-      // Boilers and Heating (US only)
-      'boiler': ['navien.com', 'triangletube.com', 'weil-mclain.com', 'buderus.us', 'crown.com', 'lochinvar.com', 'slantfin.com', 'burnham.com', 'peerlessboilers.com', 'energykinetics.com'],
-      'heat': ['lennox.com', 'rheem.com', 'ruud.com', 'goodmanmfg.com', 'carrier.com', 'york.com', 'trane.com', 'amana-hac.com', 'bryantfurnace.com', 'tempstar.com'],
-      'hvac': ['carrier.com', 'trane.com', 'lennox.com', 'yorkhvacdealer.com', 'goodmanmfg.com', 'rheem.com', 'ruud.com', 'amana-hac.com', 'daikinac.com', 'mitsubishicomfort.com'],
-      
-      // Generic terms
-      'online': ['amazon.com', 'ebay.com', 'etsy.com', 'walmart.com', 'shopify.com', 'bestbuy.com', 'target.com', 'aliexpress.com', 'overstock.com', 'wayfair.com'],
-      'service': ['thumbtack.com', 'angi.com', 'taskrabbit.com', 'yelp.com', 'homeadvisor.com', 'upwork.com', 'fiverr.com', 'care.com', 'wyzant.com', 'rover.com'],
-      'supply': ['grainger.com', 'uline.com', 'mcmaster.com', 'globalindustrial.com', 'mscdirect.com', 'fastenal.com', 'officedepot.com', 'staples.com', 'homedepot.com', 'lowes.com'],
-    };
+    // Construct search queries 
+    const searchQueries = [];
     
-    // Create a list of all possible matches based on the domain name
-    let matchedCompetitors: string[] = [];
+    // If user provided keywords, use them to find more targeted competitors
+    if (keywords && keywords.trim().length > 0) {
+      // Clean and split the keywords
+      const keywordsList = keywords.split(',').map(k => k.trim());
+      
+      // Combine domain info with each keyword for better results
+      keywordsList.forEach(keyword => {
+        if (keyword.length > 0) {
+          const industryKeyword = keyword.toLowerCase();
+          searchQueries.push(`${industryKeyword} competitors`);
+          searchQueries.push(`${industryKeyword} blogs`);
+          searchQueries.push(`best ${industryKeyword} sites`);
+        }
+      });
+    }
     
-    // Try to find direct matches in custom competitors
-    for (const [key, competitors] of Object.entries(customIndustryCompetitors)) {
-      if (domainName.includes(key)) {
-        matchedCompetitors.push(...competitors);
-        console.log(`Found matches for industry term: ${key}`);
+    // Add some generic queries if we don't have enough
+    if (searchQueries.length < 3) {
+      searchQueries.push(`${baseDomain} competitors`);
+      searchQueries.push(`sites like ${baseDomain}`);
+      searchQueries.push(`${baseDomain} alternatives`);
+    }
+    
+    // Use the search queries to find more competitor domains
+    for (const query of searchQueries) {
+      // We only need to continue if we haven't reached the limit yet
+      if (allCompetitors.length >= limit) break;
+      
+      try {
+        // Get search results for the query
+        const results = await getSearchResults(query, 20);
+        
+        // Extract unique domains from search results
+        const domains = results.map(result => extractDomain(result.link))
+          // Filter out the domain we're analyzing
+          .filter(d => d !== baseDomain && !d.includes(baseDomain))
+          // Filter out duplicates
+          .filter(d => !allCompetitors.includes(d));
+        
+        // Add unique domains to competitor list (manual deduplication)
+        for (const domain of domains) {
+          if (!allCompetitors.includes(domain)) {
+            allCompetitors.push(domain);
+          }
+        }
+        
+        console.log(`Found ${domains.length} new potential competitors from query: "${query}"`);
+        
+        // If we have enough competitors, we can stop
+        if (allCompetitors.length >= limit) break;
+      } catch (error) {
+        console.error(`Error finding competitors with query "${query}": ${error}`);
       }
     }
     
-    // Remove duplicates and the analyzed domain itself
-    const uniqueCompetitors = Array.from(new Set(matchedCompetitors))
-      .filter(d => !domain.includes(d) && !d.includes(domain));
-    
-    // Generic/default competitors for any domain that didn't match specific industries
-    // These are competitors for general business, prefer business sites not content sites
-    const defaultCompetitors = [
-      'g2.com', 'capterra.com', 'trustpilot.com', 'yelp.com', 'bbb.org',
-      'similarweb.com', 'thomasnet.com', 'crunchbase.com', 'glassdoor.com', 'indeed.com'
-    ];
-    
-    // Use matched competitors if we found any, otherwise use default
-    let finalCompetitors = uniqueCompetitors.length > 0 ? uniqueCompetitors : defaultCompetitors;
-    console.log(`Using ${finalCompetitors.length} competitors for ${domain}`);
-    
-    // We'll use our predefined competitor list combined with direct scraping
-    let allCompetitors: string[] = [...finalCompetitors];
-    
-    // Since competitorQueries is no longer defined, let's use a direct approach instead
-    try {
-      // Just use our predefined competitors - we'll get more from scraping later
-      console.log("Using predefined competitor list");
-    } catch (error: any) {
-      console.error(`Error occurred: ${error?.message || 'Unknown error'}`);
-      // Continue with predefined competitors
-    }
-    
-    // Get unique domains and filter out non-US and social/development platforms
-    const uniqueDomains = Array.from(new Set(allCompetitors))
-      .filter((d: string) => 
-        // Exclude development and content platforms
-        !d.includes("github.com") && 
-        !d.includes("medium.com") &&
-        // Exclude non-US domains 
-        !d.includes(".co.uk") && 
-        !d.includes(".de") && 
-        !d.includes(".fr") && 
-        !d.includes(".es") && 
-        !d.includes(".ca") && 
-        !d.includes(".au") && 
-        !d.includes(".eu") &&
-        !d.includes(".io") &&
-        !d.includes(".org.uk")
-      );
-    
-    // Get the top domains by relevance (the first ones that appeared in results)
-    const topDomains = uniqueDomains.slice(0, limit);
-    
-    console.log(`Found ${topDomains.length} competitor domains for ${domain}`);
-    return topDomains.length > 0 ? topDomains : [
-      // Fallback domains if nothing found
-      "semrush.com", 
-      "moz.com", 
-      "searchengineland.com"
-    ].filter(d => d !== domain);
+    console.log(`Found total of ${allCompetitors.length} competitors for ${baseDomain}`);
+    return allCompetitors.slice(0, limit);
   } catch (error) {
-    console.error(`Error finding competitor domains for ${domain}:`, error);
-    // Return reasonable fallback domains
-    return [
-      "semrush.com", 
-      "moz.com", 
-      "searchengineland.com"
-    ].filter(d => d !== domain);
+    console.error(`Error finding competitor domains: ${error}`);
+    return [];
   }
 };
 
@@ -780,1108 +599,24 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
       return cachedResults;
     }
     
-    console.log(`No cached results found. Launching headless browser for Google scraping...`);
-    return await scrapeGoogleWithHeadlessBrowser(query, limit);
+    console.log(`No cached results found. Using headlessBrowser module for Google scraping...`);
+    
+    // Use imported function from headlessBrowser module
+    const results = await scrapeGoogleWithHeadlessBrowser(query, limit);
+    
+    // Cache results if we found any
+    if (results.length > 0) {
+      cacheResults(cacheKey, results);
+    }
+    
+    return results;
   } catch (error) {
     console.error(`Error in Google scraping: ${error}`);
     return [];
   }
 };
 
-// New method: Scrape Google search results using Puppeteer headless browser
-const scrapeGoogleWithHeadlessBrowser = async (query: string, limit = 200): Promise<any[]> => {
-  console.log(`Starting Puppeteer headless browser for query: "${query}"`);
-  const allResults: any[] = [];
-  let browser = null;
-  
-  try {
-    // Launch a headless browser with stealth mode settings
-    browser = await puppeteer.launch({
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-infobars',
-        '--window-position=0,0',
-        '--ignore-certificate-errors',
-        '--ignore-certificate-errors-spki-list',
-        '--disable-web-security',
-        '--disable-features=IsolateOrigins,site-per-process',
-        '--disable-site-isolation-trials',
-        '--disable-extensions',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--disable-gpu'
-      ]
-    });
-    
-    // Create a new browser page
-    const page = await browser.newPage();
-    
-    // Use a random viewport size to look more like a real user
-    const viewportSizes = [
-      { width: 1366, height: 768 },
-      { width: 1920, height: 1080 },
-      { width: 1536, height: 864 },
-      { width: 1440, height: 900 },
-      { width: 1280, height: 720 },
-    ];
-    const viewport = viewportSizes[Math.floor(Math.random() * viewportSizes.length)];
-    await page.setViewport(viewport);
-    
-    // Track which methods work best
-    const methodSuccessCount = [0, 0, 0];
-    
-    // Try multiple Google scraping approaches - we'll rotate between them for reliability
-    // We'll use 3 different methods now, plus fallbacks
-    const scrapingMethods: Array<(page: number, retryAttempt?: number) => Promise<boolean>> = [
-      // Method 1: Standard approach - Google.com with high result count
-      async (page: number, retryAttempt = 0): Promise<boolean> => {
-        try {
-          // Use longer delays for higher retry attempts with jitter
-          const jitter = Math.random() * 1000 - 500;
-          const baseDelay = 2000 + (retryAttempt * 1000) + jitter;
-          await randomDelay(baseDelay, baseDelay + 3000);
-          
-          const formattedQuery = encodeURIComponent(query);
-          const start = page * 100;
-          
-          // Vary the query parameters more significantly on retries to avoid detection
-          let url = `https://www.google.com/search?q=${formattedQuery}&num=100&start=${start}&filter=0`;
-          if (retryAttempt > 0) {
-            // Add more randomization to URL params on retries
-            const allParams = ['hl=en', 'gl=us', 'pws=0', 'nfpr=1', 'tbs=qdr:y', 'sourceid=chrome'];
-            // Select a random subset of parameters
-            const paramCount = Math.min(retryAttempt + 1 + Math.floor(Math.random() * 2), allParams.length);
-            const randomParams: string[] = [];
-            
-            // Pick random params without repeating
-            const paramIndices = new Set<number>();
-            while (paramIndices.size < paramCount) {
-              paramIndices.add(Math.floor(Math.random() * allParams.length));
-            }
-            
-            // Add selected params to URL
-            Array.from(paramIndices).forEach(index => {
-              randomParams.push(allParams[index]);
-            });
-            
-            url += `&${randomParams.join('&')}`;
-          }
-          
-          // Add a cache-busting parameter with more randomness
-          const cacheBuster = Date.now() + Math.floor(Math.random() * 100000);
-          const finalUrl = `${url}&cb=${cacheBuster}`;
-          
-          // Get request config with rotating parameters
-          const reqConfig = getRequestConfig(retryAttempt);
-          
-          // Add additional browser-like headers with more variety
-          const headers = {
-            ...reqConfig.headers,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': Math.random() > 0.5 ? 'keep-alive' : 'close', 
-            'Upgrade-Insecure-Requests': '1',
-            // Make requests look more like a browser
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Sec-Fetch-User': '?1',
-            // Add random cookie consent header sometimes
-            ...(Math.random() > 0.7 ? { 'Cookie': 'CONSENT=YES+' } : {})
-          };
-          
-          // Randomize timeout between 25-40 seconds
-          const timeout = 25000 + Math.floor(Math.random() * 15000);
-          
-          // Create combined config with our reqConfig containing proxy if available
-          const combinedConfig = {
-            ...reqConfig,
-            headers,
-            timeout,
-            validateStatus: (status: number) => status < 500 // Accept any status < 500
-          };
-          
-          // Grab the proxy reference if it exists
-          const proxyRef = reqConfig._proxy;
-          
-          // Create custom modified headers with each request to appear different
-          headers['Accept'] = ['text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', 
-                            'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                            'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'][Math.floor(Math.random() * 3)];
-          
-          // Add randomized viewport and screen dimensions to look like real browsers
-          if (Math.random() > 0.3) {
-            const viewports = [
-              '1366x768', '1920x1080', '1536x864', '1440x900', '1280x720',
-              '1600x900', '1280x800', '1280x1024', '1024x768', '2560x1440'
-            ];
-            const viewport = viewports[Math.floor(Math.random() * viewports.length)];
-            headers['Viewport-Width'] = viewport.split('x')[0];
-            headers['Viewport-Height'] = viewport.split('x')[1];
-          }
-          
-          let response;
-          try {
-            // Attempt direct request with browser-like behavior
-            const cacheKey = `request_${query}_${page}_${retryAttempt}`;
-            console.log(`Trying request with user agent variation...`);
-            response = await axios.get(finalUrl, combinedConfig);
-            
-            if (response.status === 429 || response.status === 403) {
-              console.log(`Rate limit hit (${response.status}) - trying alternative method`);
-              
-              // Mark proxy as failed if we're using one
-              if (proxyRef) {
-                markProxyAsFailed(proxyRef);
-                console.log(`Marked proxy as failed: ${proxyRef.host}:${proxyRef.port}`);
-              }
-              
-              // Try exponential backoff with increased delay
-              if (await exponentialBackoff(retryAttempt, 8000, 2)) {
-                return await scrapingMethods[0](page, retryAttempt + 1);
-              }
-              
-              return false;
-            }
-          
-            // If we get here, the proxy worked well
-            
-          } catch (error) {
-            // If there was a connection error, mark the proxy as failed
-            if (proxyRef) {
-              markProxyAsFailed(proxyRef);
-              console.log(`Marked proxy as failed due to connection error: ${proxyRef.host}:${proxyRef.port}`);
-            }
-            
-            // Try another attempt with exponential backoff
-            if (await exponentialBackoff(retryAttempt, 5000, 2)) {
-              return await scrapingMethods[0](page, retryAttempt + 1);
-            }
-            
-            return false;
-          }
-          
-          // If we don't have a successful response, return false
-          if (!response || !response.data) {
-            return false;
-          }
-          
-          // Load HTML with Cheerio
-          const $ = cheerio.load(response.data);
-          let resultsFound = 0;
-          
-          // Try multiple selector patterns for different Google layouts - expanded list for latest patterns
-          $('.g, .Gx5Zad, .tF2Cxc, .yuRUbf, .MjjYud, .kvH3mc, .v7W49e, .ULSxyf, .MjjYud, .hlcw0c').each((i, el) => {
-            if (allResults.length >= limit) return false;
-            
-            // Try different selector patterns based on Google's current layout
-            const titleEl = $(el).find('h3, .DKV0Md, .LC20lb, .DVO7fd');
-            const linkEl = $(el).find('a[href^="http"], .yuRUbf a, a.l, .cUnQKe a');
-            const snippetEl = $(el).find('.VwiC3b, .lEBKkf, .s3v9rd, .st, .lyLwlc, .w1C3Le');
-            
-            // Only include if we found title and link
-            if (titleEl.length && linkEl.length) {
-              const title = titleEl.text().trim();
-              // Get proper href attribute - Google sometimes redirects, get the actual URL
-              const linkHref = linkEl.attr('href') || '';
-              let link = linkHref;
-              
-              // Extract the actual URL if it's a Google redirect
-              if (linkHref.includes('/url?')) {
-                try {
-                  const urlObj = new URL(linkHref);
-                  const actualUrl = urlObj.searchParams.get('q') || urlObj.searchParams.get('url');
-                  if (actualUrl) link = actualUrl;
-                } catch (e) {
-                  // Just use the original if we can't parse it
-                }
-              }
-              
-              const snippet = snippetEl.text().trim();
-              
-              // Skip if link doesn't start with http or if it's empty
-              if (!link || !link.startsWith('http')) return;
-              
-              // Skip if title or link is empty
-              if (!title || !link) return;
-              
-              // Avoid duplicate results
-              if (allResults.some(result => result.link === link)) return;
-              
-              allResults.push({
-                title,
-                link,
-                snippet,
-                position: allResults.length + 1
-              });
-              
-              resultsFound++;
-            }
-          });
-          
-          return resultsFound > 0;
-        } catch (error) {
-          console.error(`Method 1 error for page ${page}: ${error}`);
-          return false;
-        }
-      },
-      
-      // Method 2: Google search with different parameters, selectors, and reduced results per page
-      async (page: number, retryAttempt = 0): Promise<boolean> => {
-        try {
-          // Vary delay based on retry attempt with jitter
-          const jitter = Math.random() * 1500 - 750;
-          const baseDelay = 3000 + (retryAttempt * 2000) + jitter;
-          await randomDelay(baseDelay, baseDelay + 4000);
-          
-          const formattedQuery = encodeURIComponent(query);
-          const start = page * 10; // Different pagination strategy
-          
-          // Vary the URL parameters on retries - using a different parameter approach
-          let url = `https://www.google.com/search?q=${formattedQuery}&start=${start}&ie=utf-8&oe=utf-8&pws=0`;
-          if (retryAttempt > 0) {
-            // Add different URL parameters on retries
-            const allParams = ['hl=en', 'gl=us', 'safe=active', 'filter=0', 'num=10', 'source=hp', 'ei=' + Math.random().toString(36).substring(2, 10)];
-            // Select a random subset of 3-5 parameters
-            const paramCount = 3 + Math.floor(Math.random() * 3);
-            const randomIndices = new Set<number>();
-            while (randomIndices.size < paramCount) {
-              randomIndices.add(Math.floor(Math.random() * allParams.length));
-            }
-            
-            const randomParams: string[] = Array.from(randomIndices).map(index => allParams[index]);
-            url += `&${randomParams.join('&')}`;
-          }
-          
-          // Add a cache-busting parameter with more variety
-          const cacheBuster = Date.now() + Math.floor(Math.random() * 100000);
-          url += `&random=${cacheBuster}`;
-          
-          // Get request config with different parameters for this method
-          const reqConfig = getRequestConfig(retryAttempt + 5); // Use different set of params than method 1
-          
-          // Add additional browser-like headers with more variety
-          const headers = {
-            ...reqConfig.headers,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-            'Connection': Math.random() > 0.5 ? 'keep-alive' : 'close',
-            'Referer': Math.random() > 0.5 ? 'https://www.google.com/' : undefined,
-            'Upgrade-Insecure-Requests': '1',
-            // Add browser-like headers
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate', 
-            'Sec-Fetch-Site': Math.random() > 0.5 ? 'same-origin' : 'none',
-            'Sec-Fetch-User': '?1',
-            // Randomize cookie consent
-            ...(Math.random() > 0.6 ? { 'Cookie': 'CONSENT=YES+sharedstate' } : {})
-          };
-          
-          // Randomize timeout between 20-35 seconds
-          const timeout = 20000 + Math.floor(Math.random() * 15000);
-          
-          // Combined config with proxy support
-          const combinedConfig = {
-            ...reqConfig,
-            headers,
-            timeout,
-            validateStatus: (status: number) => status < 500
-          };
-          
-          // Get proxy reference if available
-          const proxyRef = reqConfig._proxy;
-          
-          let response;
-          try {
-            response = await axios.get(url, combinedConfig);
-            
-            if (response.status === 429 || response.status === 403) {
-              console.log(`Rate limit hit (${response.status}) - trying alternative method`);
-              
-              // Mark proxy as failed if we're using one
-              if (proxyRef) {
-                markProxyAsFailed(proxyRef);
-                console.log(`Marked proxy as failed: ${proxyRef.host}:${proxyRef.port}`);
-              }
-              
-              // Try exponential backoff and retry with longer delays
-              if (await exponentialBackoff(retryAttempt, 6000, 2)) {
-                return await scrapingMethods[1](page, retryAttempt + 1);
-              }
-              
-              return false;
-            }
-          } catch (error) {
-            // If there was a connection error, mark the proxy as failed
-            if (proxyRef) {
-              markProxyAsFailed(proxyRef);
-              console.log(`Marked proxy as failed due to connection error: ${proxyRef.host}:${proxyRef.port}`);
-            }
-            
-            // Try another attempt with exponential backoff
-            if (await exponentialBackoff(retryAttempt, 6000, 2)) {
-              return await scrapingMethods[1](page, retryAttempt + 1);
-            }
-            
-            return false;
-          }
-          
-          // If no valid response, return false
-          if (!response || !response.data) {
-            return false;
-          }
-          
-          const $ = cheerio.load(response.data);
-          let resultsFound = 0;
-          
-          // Different selector approach - expanded for latest Google layouts
-          $('div.g, div[data-hveid], .rc, .yuRUbf, .Qlx9o, .x54gtf, .hgKElc, .kp-blk').each((i, el) => {
-            if (allResults.length >= limit) return false;
-            
-            // Method 2 uses different selectors
-            const titleEl = $(el).find('h3, .LC20lb, .qrShPb');
-            const linkEl = $(el).find('a[href^="http"], a.l, cite.iUh30, .qLRx3b, span.dyjrff');
-            const snippetEl = $(el).find('.st, .aCOpRe, .IsZvec, .s3v9rd, .IThcWe');
-            
-            if (titleEl.length && linkEl.length) {
-              const title = titleEl.text().trim();
-              let link = linkEl.attr('href') || '';
-              
-              if (link.startsWith('/url?')) {
-                try {
-                  const urlObj = new URL(`https://www.google.com${link}`);
-                  link = urlObj.searchParams.get('q') || link;
-                } catch (e) {
-                  // Use original link
-                }
-              } else if (!link.startsWith('http')) {
-                // Sometimes Google shows cite with just the domain
-                if (linkEl.is('cite')) {
-                  link = `https://${link}`;
-                }
-              }
-              
-              const snippet = snippetEl.text().trim();
-              
-              // Skip if link doesn't start with http or if it's empty
-              if (!link || !link.startsWith('http')) return;
-              
-              // Skip if title or link is empty
-              if (!title || !link) return;
-              
-              // Avoid duplicate results
-              if (allResults.some(result => result.link === link)) return;
-              
-              allResults.push({
-                title,
-                link,
-                snippet,
-                position: allResults.length + 1
-              });
-              
-              resultsFound++;
-            }
-          });
-          
-          return resultsFound > 0;
-        } catch (error) {
-          console.error(`Method 2 error for page ${page}: ${error}`);
-          return false;
-        }
-      },
-      
-      // Method 3: Use mobile Google to avoid some rate limiting
-      async (page: number, retryAttempt = 0): Promise<boolean> => {
-        try {
-          // Use longer delays for mobile approach
-          const jitter = Math.random() * 2000 - 1000;
-          const baseDelay = 3500 + (retryAttempt * 2500) + jitter;
-          await randomDelay(baseDelay, baseDelay + 5000);
-          
-          const formattedQuery = encodeURIComponent(query);
-          const start = page * 10;
-          
-          // Mobile search URL with parameters
-          let url = `https://www.google.com/search?q=${formattedQuery}&start=${start}&ie=UTF-8`;
-          
-          // Add various mobile-specific parameters
-          const mobileParams = [
-            'source=mobile',
-            'inm=vs',
-            'vet=12ahUKEwiOi6Dj8' + Math.floor(Math.random() * 1000) + Math.random().toString(36).substring(2, 6) + '.ZWI4ZWtjaxIQbGVhcyBnLU1BVHJ',
-            'ei=' + Math.random().toString(36).substring(2, 10),
-            'oq=' + formattedQuery, 
-            'gs_lcp=Cg' + Math.floor(Math.random() * 10) + 'BAxMA' + Math.random().toString(36).substring(2, 6)
-          ];
-          
-          url += `&${mobileParams.join('&')}`;
-          
-          // Cache busting
-          const cacheBuster = Date.now() + Math.floor(Math.random() * 100000);
-          url += `&sclient=mobile-gws-wiz-serp&cs=${cacheBuster}`;
-          
-          // Pick a mobile user agent
-          const mobileUserAgents = [
-            'Mozilla/5.0 (iPhone; CPU iPhone OS 15_6_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.6 Mobile/15E148 Safari/604.1',
-            'Mozilla/5.0 (Linux; Android 12; SM-G998B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36',
-            'Mozilla/5.0 (iPhone; CPU iPhone OS 16_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/112.0.5615.46 Mobile/15E148 Safari/604.1',
-            'Mozilla/5.0 (Linux; Android 13; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36',
-            'Mozilla/5.0 (iPad; CPU OS 16_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.4 Mobile/15E148 Safari/604.1'
-          ];
-          
-          const mobileUA = mobileUserAgents[Math.floor(Math.random() * mobileUserAgents.length)];
-          
-          // Mobile-specific headers
-          const headers = {
-            'User-Agent': mobileUA,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': Math.random() > 0.5 ? 'keep-alive' : 'close',
-            'Upgrade-Insecure-Requests': '1',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Sec-Fetch-User': '?1',
-            // Mobile-specific headers
-            'X-Requested-With': 'XMLHttpRequest',
-            'Save-Data': Math.random() > 0.5 ? 'on' : undefined,
-            'Viewport-Width': String(375 + Math.floor(Math.random() * 50)),
-            'Width': String(375 + Math.floor(Math.random() * 50))
-          };
-          
-          // Timeout for mobile
-          const timeout = 30000 + Math.floor(Math.random() * 10000);
-          
-          // Get request config with mobile-optimized parameters
-          const reqConfig = getRequestConfig(retryAttempt + 10); // Use a different set than methods 1 and 2
-          
-          // Create combined config with our reqConfig containing proxy if available
-          const combinedConfig = {
-            ...reqConfig,
-            headers,
-            timeout,
-            validateStatus: (status: number) => status < 500
-          };
-          
-          // Grab the proxy reference if it exists
-          const proxyRef = reqConfig._proxy;
-          
-          let response;
-          try {
-            response = await axios.get(url, combinedConfig);
-            
-            if (response.status === 429 || response.status === 403) {
-              console.log(`Rate limit hit (${response.status}) - trying alternative method`);
-              
-              // Mark proxy as failed if we're using one
-              if (proxyRef) {
-                markProxyAsFailed(proxyRef);
-                console.log(`Marked proxy as failed: ${proxyRef.host}:${proxyRef.port}`);
-              }
-              
-              if (await exponentialBackoff(retryAttempt, 7000, 2)) {
-                return await scrapingMethods[2](page, retryAttempt + 1);
-              }
-              
-              return false;
-            }
-          } catch (error) {
-            // If there was a connection error, mark the proxy as failed
-            if (proxyRef) {
-              markProxyAsFailed(proxyRef);
-              console.log(`Marked proxy as failed due to connection error: ${proxyRef.host}:${proxyRef.port}`);
-            }
-            
-            if (await exponentialBackoff(retryAttempt, 7000, 2)) {
-              return await scrapingMethods[2](page, retryAttempt + 1);
-            }
-            
-            return false;
-          }
-          
-          // If no valid response, return false
-          if (!response || !response.data) {
-            return false;
-          }
-          
-          const $ = cheerio.load(response.data);
-          let resultsFound = 0;
-          
-          // Mobile selectors are different
-          $('.Ww4FFb, .xpd, .mnr-c, .g, .YiHbdc, [data-sokoban-container]').each((i, el) => {
-            if (allResults.length >= limit) return false;
-            
-            // Mobile-specific selectors
-            const titleEl = $(el).find('div[role="heading"], .kWxLod, .BVG0Nb, .s3v9rd');
-            const linkEl = $(el).find('a[href^="http"], a[data-jsarwt="1"], a.cz3goc');
-            const snippetEl = $(el).find('.UMy8j, .s3v9rd, .nKbPrd, .qkunPe, .VbtNib');
-            
-            if (titleEl.length && linkEl.length) {
-              const title = titleEl.text().trim();
-              let link = linkEl.attr('href') || '';
-              
-              // Clean up mobile redirect URLs
-              if (link.includes('/url?')) {
-                try {
-                  const urlObj = new URL(link.startsWith('http') ? link : `https://www.google.com${link}`);
-                  const actualUrl = urlObj.searchParams.get('q') || urlObj.searchParams.get('url');
-                  if (actualUrl) link = actualUrl;
-                } catch (e) {
-                  // Use original
-                }
-              }
-              
-              const snippet = snippetEl.text().trim();
-              
-              // Skip invalid links
-              if (!link || !link.startsWith('http')) return;
-              if (!title || !link) return;
-              if (allResults.some(result => result.link === link)) return;
-              
-              allResults.push({
-                title,
-                link,
-                snippet,
-                position: allResults.length + 1
-              });
-              
-              resultsFound++;
-            }
-          });
-          
-          return resultsFound > 0;
-        } catch (error) {
-          console.error(`Method 3 error for page ${page}: ${error}`);
-          return false;
-        }
-      }
-    ];
-    
-    // Advanced adaptive strategy with intelligent method selection
-    let methodIndex = 0;
-    let totalPages = 0;
-    let success = false;
-    let conservativeModeActive = false;
-    
-    // Apply initial delay to appear more human-like
-    await randomDelay(4000, 7000);
-    
-    // More aggressive early exit conditions for faster results
-    // Lower target for faster initial response, especially in rate-limited scenarios
-    const targetResultCount = Math.min(limit, 40); // Aim for ~40 results initially
-    
-    // Determine the number of methods for rotation
-    const methodCount = scrapingMethods.length;
-    
-    // Track which methods work best to adapt our strategy
-    const methodSuccesses = [0, 0, 0]; // Count of successful responses for each method
-    let bestMethod = -1; // Most successful method (-1 = no data yet)
-    
-    while (allResults.length < targetResultCount && totalPages < 9) { // Try up to 9 pages total
-      // Activate conservative mode if too many failures
-      if (consecutiveFailures >= 3 && !conservativeModeActive) {
-        console.log('⚠️ Circuit breaker tripped - switching to conservative mode');
-        circuitBreakerTripped = true;
-        conservativeModeActive = true;
-        console.log('Conservative mode active - using longer delays between requests');
-        
-        // If we have success data, switch to the best method
-        if (bestMethod >= 0) {
-          console.log(`Switching to best performing method (${bestMethod + 1})`);
-          methodIndex = bestMethod; // Force using best method
-        }
-        
-        // Add longer pause when switching to conservative mode
-        await randomDelay(8000, 12000);
-      }
-      
-      // Smart method selection based on success history
-      if (conservativeModeActive && bestMethod >= 0) {
-        // In conservative mode, always use best method
-        methodIndex = bestMethod;
-      } else if (totalPages >= 3) {
-        // After trying each method once, start favoring successful methods
-        // Find method with highest success rate
-        const maxSuccesses = Math.max(...methodSuccesses);
-        if (maxSuccesses > 0) {
-          bestMethod = methodSuccesses.indexOf(maxSuccesses);
-          // 75% chance to use best method, 25% chance to try others
-          if (Math.random() < 0.75) {
-            methodIndex = bestMethod;
-          } else {
-            // Choose randomly from other methods
-            const otherMethods = Array.from({length: methodCount}, (_, i) => i).filter(i => i !== bestMethod);
-            methodIndex = otherMethods[Math.floor(Math.random() * otherMethods.length)];
-          }
-        } else {
-          // No successes yet, continue round-robin
-          methodIndex = totalPages % methodCount;
-        }
-      } else {
-        // First few attempts: use simple round-robin
-        methodIndex = totalPages % methodCount;
-      }
-      
-      const methodToUse = methodIndex;
-      const method = scrapingMethods[methodToUse];
-      
-      // Each method has its own sequence of page numbers
-      const page = Math.floor(totalPages / methodCount);
-      
-      // Add variable delays between requests, longer in conservative mode
-      if (conservativeModeActive) {
-        const pauseDuration = 7000 + Math.floor(Math.random() * 5000) + (methodToUse * 1000);
-        await randomDelay(pauseDuration, pauseDuration + 3000);
-      } else {
-        const pauseDuration = 2000 + Math.floor(Math.random() * 3000) + (methodToUse * 500);
-        await randomDelay(pauseDuration, pauseDuration + 2000);
-      }
-      
-      console.log(`Trying scraping method ${methodToUse + 1}, page ${page + 1}`);
-      
-      try {
-        success = await method(page);
-        
-        if (success) {
-          // Update success metrics
-          methodSuccesses[methodToUse]++;
-          // Reset consecutive failures counter on success
-          consecutiveFailures = 0;
-        } else {
-          // Increment failure counter
-          consecutiveFailures++;
-          console.log(`Scraping attempt failed. Consecutive failures: ${consecutiveFailures}`);
-          
-          // Trip circuit breaker if too many consecutive failures
-          if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES && !circuitBreakerTripped) {
-            circuitBreakerTripped = true;
-            console.log('⚠️ Circuit breaker tripped - switching to conservative mode');
-            
-            // Wait longer before continuing when circuit breaker trips
-            await randomDelay(5000, 8000);
-          }
-        }
-      } catch (methodError) {
-        console.error(`Error in scraping method ${methodToUse + 1}:`, methodError);
-        consecutiveFailures++;
-      }
-      
-      // Rotate methods whether successful or not
-      methodIndex++;
-      totalPages++;
-      
-      // Very early exit if we can't get any results after 6 attempts
-      if (totalPages >= 6 && allResults.length === 0) {
-        console.log(`No results found after ${totalPages} attempts - giving up`);
-        break;
-      }
-      
-      // If circuit breaker is tripped, add longer delays between requests
-      if (circuitBreakerTripped) {
-        console.log('Conservative mode active - using longer delays between requests');
-        await randomDelay(3000, 5000);
-      }
-      
-      // Enhanced quick exit conditions:
-      
-      // 1. If we have at least 5 results from any method, exit very early
-      if (allResults.length >= 5 && totalPages >= 2) {
-        console.log(`Found ${allResults.length} results quickly - returning very early for better UX`);
-        break;
-      }
-      
-      // 2. If we have at least 15 results after trying multiple methods, that's good enough
-      if (allResults.length >= 15 && totalPages >= 3) {
-        console.log(`Found ${allResults.length} results - sufficient quantity for initial analysis`);
-        break;
-      }
-      
-      // 3. If we have at least 30 results at any point, that's plenty
-      if (allResults.length >= 30) {
-        console.log(`Found ${allResults.length} results - optimal quantity for analysis`);
-        break;
-      }
-      
-      // Varied pause between requests
-      const pauseDuration = 1000 + Math.floor(Math.random() * 3000) + (methodToUse * 500);
-      await randomDelay(pauseDuration, pauseDuration + 2000);
-    }
-    
-    console.log(`Scraped ${allResults.length} Google results for "${query}" after ${totalPages} page attempts`);
-    
-    // If we couldn't get any results after multiple retries, try emergency headless browser approach
-    if (allResults.length === 0 && consecutiveFailures >= 5) {
-      console.log("All proxies failed. Attempting emergency headless browser fallback...");
-      
-      // Use a puppeteer-based approach as last resort
-      try {
-        // Launch headless browser with stealth mode
-        const browser = await puppeteer.launch({
-          headless: true,
-          args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox', 
-            '--disable-web-security',
-            '--disable-features=IsolateOrigins,site-per-process',
-            `--user-agent=${getRandomUserAgent()}`,
-          ]
-        });
-        
-        try {
-          const page = await browser.newPage();
-          
-          // Set random viewport
-          const viewports = [
-            { width: 1366, height: 768 },
-            { width: 1920, height: 1080 },
-            { width: 1536, height: 864 }
-          ];
-          const viewport = viewports[Math.floor(Math.random() * viewports.length)];
-          await page.setViewport(viewport);
-          
-          // Set cookies to bypass consent screen
-          await page.setCookie({
-            name: 'CONSENT',
-            value: 'YES+cb.20220321-17-p0.en+FX+119',
-            domain: '.google.com',
-          });
-          
-          // Navigate to Google search
-          const formattedQuery = encodeURIComponent(query);
-          console.log("Navigating to Google with headless browser...");
-          await page.goto(`https://www.google.com/search?q=${formattedQuery}&num=30&hl=en`, { 
-            waitUntil: 'networkidle2',
-            timeout: 25000
-          });
-          
-          // Extract results
-          console.log("Extracting results with headless browser...");
-          const browserResults = await page.evaluate(() => {
-            const results: any[] = [];
-            const elements = document.querySelectorAll('div.g, .Gx5Zad, .tF2Cxc, .yuRUbf, div[data-hveid]');
-            
-            elements.forEach((el, i) => {
-              const titleEl = el.querySelector('h3');
-              const linkEl = el.querySelector('a');
-              const snippetEl = el.querySelector('.VwiC3b, .lEBKkf, div[data-snc], .st');
-              
-              if (titleEl && linkEl) {
-                const title = titleEl.textContent?.trim();
-                const link = linkEl.getAttribute('href');
-                const snippet = snippetEl?.textContent?.trim() || '';
-                
-                if (title && link && link.startsWith('http')) {
-                  results.push({
-                    title,
-                    link,
-                    snippet,
-                    position: i + 1,
-                    source: 'google-headless'
-                  });
-                }
-              }
-            });
-            
-            return results;
-          });
-          
-          console.log(`Headless browser found ${browserResults.length} results`);
-          allResults.push(...browserResults);
-          
-        } finally {
-          await browser.close();
-        }
-      } catch (browserError) {
-        console.error("Error with headless browser fallback:", browserError);
-      }
-    }
-    
-    // Cache the results if we found anything useful
-    if (allResults.length > 0) {
-      cacheResults(cacheKey, allResults);
-    }
-    
-    return allResults;
-  } catch (error) {
-    console.error(`Error in Google scraping coordinator: ${error}`);
-    return [];
-  }
-};
-
-// Web scrape search results directly from Bing
-export const scrapeBingSearchResults = async (query: string, limit = 200): Promise<any[]> => {
-  try {
-    console.log(`Scraping Bing search results for: ${query}`);
-    
-    // Bing also requires multiple requests to get 200 results
-    const allResults: any[] = [];
-    
-    for (let page = 0; page < 4; page++) {
-      // Format query for URL - Bing shows 50 results per page
-      const formattedQuery = encodeURIComponent(query);
-      const first = page * 50 + 1;
-      const url = `https://www.bing.com/search?q=${formattedQuery}&count=50&first=${first}`;
-      
-      // Make request with random user agent
-      const response = await axios.get(url, {
-        headers: {
-          'User-Agent': getRandomUserAgent(),
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.5',
-          'Accept-Encoding': 'gzip, deflate, br',
-          'Connection': 'keep-alive',
-          'Upgrade-Insecure-Requests': '1'
-        },
-        timeout: 15000 // 15 second timeout
-      });
-      
-      // Load HTML with Cheerio
-      const $ = cheerio.load(response.data);
-      
-      // Select all search result elements
-      $('.b_algo, .b_algoSlug, .b_snippetBigText').each((i, el) => {
-        // Only collect up to limit results
-        if (allResults.length >= limit) return false;
-        
-        let title = '', link = '', snippet = '';
-        
-        // Try different selector patterns
-        const titleEl = $(el).find('h2 a, .b_title a');
-        const snippetEl = $(el).find('.b_caption p, .b_snippet, .b_snippetBigText');
-        
-        if (titleEl.length) {
-          title = titleEl.text().trim();
-          link = titleEl.attr('href') || '';
-        }
-        
-        if (snippetEl.length) {
-          snippet = snippetEl.text().trim();
-        }
-        
-        // Skip if link doesn't start with http or if it's empty
-        if (!link || !link.startsWith('http')) return;
-        
-        // Skip if title or link is empty
-        if (!title || !link) return;
-        
-        // Avoid duplicate results
-        if (allResults.some(result => result.link === link)) return;
-        
-        allResults.push({
-          title,
-          link,
-          snippet,
-          position: allResults.length + 1
-        });
-      });
-      
-      // Wait a short delay before next request to avoid rate limiting
-      if (page < 3) await new Promise(r => setTimeout(r, 2000));
-    }
-    
-    console.log(`Scraped ${allResults.length} Bing results for "${query}"`);
-    return allResults;
-  } catch (error) {
-    console.error(`Error scraping Bing search results: ${error}`);
-    return [];
-  }
-};
-
-// Scrape search results from Yahoo
-export const scrapeYahooSearchResults = async (query: string, limit = 150): Promise<any[]> => {
-  try {
-    console.log(`Scraping Yahoo search results for: ${query}`);
-    const allResults: any[] = [];
-    
-    // Yahoo typically shows 10 results per page, so we need multiple requests
-    for (let page = 1; page <= 5; page++) {
-      if (allResults.length >= limit) break;
-      
-      await randomDelay(2000, 4000); // Use longer delays for Yahoo
-      
-      const formattedQuery = encodeURIComponent(query);
-      const offset = (page - 1) * 10;
-      const url = `https://search.yahoo.com/search?p=${formattedQuery}&b=${offset + 1}`;
-      
-      try {
-        const response = await axios.get(url, {
-          headers: {
-            'User-Agent': getRandomUserAgent(),
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Cache-Control': 'no-cache'
-          },
-          timeout: 20000
-        });
-        
-        const $ = cheerio.load(response.data);
-        let resultsOnPage = 0;
-        
-        // Yahoo search result selectors
-        $('.algo, .algo-sr').each((i, el) => {
-          if (allResults.length >= limit) return false;
-          
-          const titleEl = $(el).find('h3, .title a');
-          const linkEl = $(el).find('a.d-ib, .title a');
-          const snippetEl = $(el).find('.compText, .algo-sr p');
-          
-          if (titleEl.length && linkEl.length) {
-            const title = titleEl.text().trim();
-            let link = linkEl.attr('href') || '';
-            
-            // Yahoo often uses redirects
-            if (link.includes('/RU=')) {
-              try {
-                // Extract the real URL from Yahoo's redirect
-                const match = link.match(/\/RU=([^/]+)\/RK=/);
-                if (match && match[1]) {
-                  link = decodeURIComponent(match[1]);
-                }
-              } catch (e) {
-                // Use original link
-              }
-            }
-            
-            const snippet = snippetEl.text().trim();
-            
-            // Skip if link doesn't start with http or if it's empty
-            if (!link || !link.startsWith('http')) return;
-            
-            // Skip if title is empty
-            if (!title) return;
-            
-            // Avoid duplicate results
-            if (allResults.some(result => result.link === link)) return;
-            
-            allResults.push({
-              title,
-              link,
-              snippet,
-              position: allResults.length + 1
-            });
-            
-            resultsOnPage++;
-          }
-        });
-        
-        console.log(`Found ${resultsOnPage} Yahoo results on page ${page}`);
-        
-        // If no results on this page, stop pagination
-        if (resultsOnPage === 0) break;
-        
-      } catch (error) {
-        console.error(`Error scraping Yahoo page ${page}:`, error);
-        // Continue to next page
-      }
-      
-      // Add delay between page requests
-      await randomDelay(1500, 3000);
-    }
-    
-    console.log(`Scraped ${allResults.length} total Yahoo results for "${query}"`);
-    return allResults;
-  } catch (error) {
-    console.error(`Error in Yahoo scraping:`, error);
-    return [];
-  }
-};
-
-// Scrape search results from DuckDuckGo
-export const scrapeDuckDuckGoResults = async (query: string, limit = 150): Promise<any[]> => {
-  try {
-    console.log(`Scraping DuckDuckGo search results for: ${query}`);
-    const allResults: any[] = [];
-    
-    // DuckDuckGo loads results via JS, so we'll use their HTML endpoint
-    const formattedQuery = encodeURIComponent(query);
-    const url = `https://duckduckgo.com/html/?q=${formattedQuery}`;
-    
-    try {
-      const response = await axios.get(url, {
-        headers: {
-          'User-Agent': getRandomUserAgent(),
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.5',
-          'Cache-Control': 'no-cache'
-        },
-        timeout: 20000
-      });
-      
-      const $ = cheerio.load(response.data);
-      
-      // DuckDuckGo search result selectors
-      $('.result, .web-result').each((i, el) => {
-        if (allResults.length >= limit) return false;
-        
-        const titleEl = $(el).find('.result__title, .result__a');
-        const linkEl = $(el).find('.result__url, .result__a');
-        const snippetEl = $(el).find('.result__snippet');
-        
-        if (titleEl.length && linkEl.length) {
-          const title = titleEl.text().trim();
-          let link = '';
-          
-          // Try to get the direct URL
-          if (linkEl.attr('href')) {
-            link = linkEl.attr('href') || '';
-          } else {
-            // Sometimes the URL is in a data attribute
-            const dataNrh = $(linkEl).attr('data-nrh');
-            link = typeof dataNrh === 'string' ? dataNrh : (linkEl.attr('href') || '');
-          }
-          
-          // For relative URLs
-          if (link.startsWith('/')) {
-            link = `https://duckduckgo.com${link}`;
-          }
-          
-          const snippet = snippetEl.text().trim();
-          
-          // Skip if link is empty
-          if (!link) return;
-          
-          // Try to extract proper URL from DuckDuckGo redirects
-          if (link.includes('duckduckgo.com/l/?')) {
-            try {
-              const urlObj = new URL(link);
-              const actualUrl = urlObj.searchParams.get('uddg');
-              if (actualUrl) link = actualUrl;
-            } catch (e) {
-              // Use original link
-            }
-          }
-          
-          // Skip if title is empty or link doesn't start with http
-          if (!title || !link.startsWith('http')) return;
-          
-          // Avoid duplicate results
-          if (allResults.some(result => result.link === link)) return;
-          
-          allResults.push({
-            title,
-            link,
-            snippet,
-            position: allResults.length + 1
-          });
-        }
-      });
-      
-      console.log(`Found ${allResults.length} DuckDuckGo results`);
-      
-    } catch (error) {
-      console.error(`Error scraping DuckDuckGo:`, error);
-    }
-    
-    return allResults;
-  } catch (error) {
-    console.error(`Error in DuckDuckGo scraping:`, error);
-    return [];
-  }
-};
-
-// Get search results using multiple engines without SerpAPI
+// Get search results using Google only
 export const getSearchResults = async (domain: string, limit = 10): Promise<any[]> => {
   try {
     const query = `site:${domain}`;
@@ -1936,800 +671,509 @@ export const extractIndustryFromDomain = (domain: string): string => {
   const domainName = domain.replace(/^www\./i, '').split('.')[0];
   
   // Extract potential industry indicators from domain name
-  if (domainName.includes('tech') || domainName.includes('soft') || domainName.includes('app') || 
-      domainName.includes('code') || domainName.includes('dev') || domainName.includes('cloud') ||
-      domainName.includes('data')) {
-    return 'technology';
-  } else if (domainName.includes('shop') || domainName.includes('store') || domainName.includes('buy') ||
-             domainName.includes('retail') || domainName.includes('market')) {
-    return 'retail';
-  } else if (domainName.includes('health') || domainName.includes('med') || domainName.includes('care') ||
-             domainName.includes('clinic') || domainName.includes('doctor') || domainName.includes('hospital')) {
-    return 'healthcare';
-  } else if (domainName.includes('food') || domainName.includes('restaurant') || domainName.includes('eat') ||
-             domainName.includes('kitchen') || domainName.includes('meal') || domainName.includes('chef')) {
-    return 'food';
-  } else if (domainName.includes('travel') || domainName.includes('tour') || domainName.includes('trip') ||
-             domainName.includes('holiday') || domainName.includes('vacation')) {
-    return 'travel';
-  } else if (domainName.includes('finance') || domainName.includes('bank') || domainName.includes('invest') ||
-             domainName.includes('money') || domainName.includes('capital')) {
-    return 'finance';
-  } else {
-    // Default to a generic industry query
-    return domainName;
+  const keywords = domainName.match(/[a-zA-Z]{3,}/g) || [];
+  
+  // Common industry mappings
+  const industryKeywords: {[key: string]: string} = {
+    // Tech and software
+    'tech': 'technology',
+    'software': 'software',
+    'app': 'applications',
+    'dev': 'development',
+    'code': 'coding',
+    'data': 'data analytics',
+    'cloud': 'cloud computing',
+    'web': 'web development',
+    'digital': 'digital services',
+    'cyber': 'cybersecurity',
+    'ai': 'artificial intelligence',
+    'robot': 'robotics',
+    'compute': 'computing',
+    
+    // E-commerce and retail
+    'shop': 'shopping',
+    'store': 'retail',
+    'market': 'marketplace',
+    'buy': 'e-commerce',
+    'sell': 'e-commerce',
+    'retail': 'retail',
+    'commerce': 'e-commerce',
+    'deal': 'deals',
+    
+    // Finance
+    'bank': 'banking',
+    'finance': 'finance',
+    'invest': 'investing',
+    'money': 'finance',
+    'capital': 'finance',
+    'wealth': 'wealth management',
+    'crypto': 'cryptocurrency',
+    'coin': 'cryptocurrency',
+    
+    // Health and wellness
+    'health': 'healthcare',
+    'med': 'medical',
+    'care': 'healthcare',
+    'fit': 'fitness',
+    'wellness': 'wellness',
+    'doctor': 'healthcare',
+    'clinic': 'healthcare',
+    'therapy': 'therapy',
+    'nutrition': 'nutrition',
+    
+    // Travel and hospitality
+    'travel': 'travel',
+    'trip': 'travel',
+    'tour': 'tourism',
+    'hotel': 'hospitality',
+    'booking': 'travel booking',
+    'vacation': 'travel',
+    'flight': 'air travel',
+    'journey': 'travel',
+    
+    // Education
+    'edu': 'education',
+    'learn': 'education',
+    'school': 'education',
+    'academic': 'education',
+    'tutor': 'tutoring',
+    'course': 'education',
+    'study': 'education',
+    'college': 'higher education',
+    
+    // Media and entertainment
+    'media': 'media',
+    'news': 'news',
+    'entertainment': 'entertainment',
+    'game': 'gaming',
+    'play': 'gaming',
+    'stream': 'streaming',
+    'music': 'music',
+    'video': 'video',
+    'film': 'film',
+    'movie': 'movies',
+    'tv': 'television',
+    'watch': 'media',
+    
+    // Food and beverage
+    'food': 'food',
+    'recipe': 'cooking',
+    'cook': 'cooking',
+    'kitchen': 'cooking',
+    'meal': 'food',
+    'restaurant': 'restaurants',
+    'eat': 'food',
+    'drink': 'beverages',
+    'coffee': 'coffee',
+    'bake': 'baking',
+    
+    // Real estate
+    'home': 'real estate',
+    'house': 'real estate',
+    'property': 'real estate',
+    'realty': 'real estate',
+    'estate': 'real estate',
+    'apartment': 'real estate',
+    'rent': 'rental',
+    'lease': 'real estate',
+    
+    // Automotive
+    'car': 'automotive',
+    'auto': 'automotive',
+    'vehicle': 'automotive',
+    'drive': 'automotive',
+    'motor': 'automotive',
+  };
+  
+  // Try to find matches
+  for (const keyword of keywords) {
+    const lowerKeyword = keyword.toLowerCase();
+    for (const [key, industry] of Object.entries(industryKeywords)) {
+      if (lowerKeyword.includes(key)) {
+        return industry;
+      }
+    }
   }
+  
+  // Default if no matches
+  return 'general';
 };
 
-// Process competitor content from search results and scraping
+// Process competitor content
 export const processCompetitorContent = async (
-  domain: string, 
-  analysisId: number,
+  domain: string,
+  competitorDomains: string[],
   keywords?: string
-): Promise<Partial<CompetitorContent & {keywords: string[]}>[]> => {
+): Promise<any[]> => {
   try {
-    console.log(`Starting content analysis for ${domain}...`);
+    console.log(`Processing content for ${competitorDomains.length} competitors of ${domain}`);
+    const results: any[] = [];
     
-    // Create a cache key that includes domain and keywords for content analysis
-    const cacheKey = `competitor_content_${domain}_${keywords || ''}`;
-    const cachedResults = getCachedResults(cacheKey);
-    
-    // Use cached results if available - this helps avoid rate limits entirely
-    if (cachedResults && cachedResults.length > 0) {
-      console.log(`Using ${cachedResults.length} cached competitor content results for ${domain}`);
-      
-      // Update the analysisId on each cached item since this might be a new analysis
-      return cachedResults.map((item: any) => ({
-        ...item, 
-        analysisId
-      }));
-    }
-    
-    // Extract domain name and TLD for better searching
-    const domainName = domain.replace(/^www\./i, '').split('.')[0].toLowerCase();
-    const industryTerm = extractIndustryFromDomain(domain);
-    
-    // DIRECT CONTENT SEARCH APPROACH
-    // Rather than finding competitors first, we'll directly search for relevant content
-    // across the entire web that matches the user's domain and keywords
-    
-    // Build a direct content query to find articles and blogs related to the input
-    // Create multiple variations of search queries for better results
-    const searchQueries = [];
-    
-    // Build more targeted content search queries with stronger content focus
-    if (keywords) {
-      // Primary query - focused on keywords with strong content indicators
-      searchQueries.push(`"${keywords}" -site:${domain} (inurl:blog OR inurl:article OR inurl:guide OR inurl:resources)`);
-      
-      // How-to and tutorial focused query
-      searchQueries.push(`${domainName} ${keywords} how to -site:${domain} (inurl:blog OR inurl:tutorial OR inurl:guide)`);
-      
-      // Industry-specific trend/insight query
-      searchQueries.push(`${industryTerm} ${keywords} trends -site:${domain} (inurl:blog OR inurl:article OR inurl:insights)`);
-      
-      // Best practices content query
-      searchQueries.push(`${keywords} best practices -site:${domain} (inurl:blog OR inurl:guide)`);
-    } else {
-      // Default to content-focused queries when no keywords provided
-      searchQueries.push(`"${industryTerm}" tips -site:${domain} (inurl:blog OR inurl:article OR inurl:guide)`);
-      searchQueries.push(`${domainName} industry trends -site:${domain} (inurl:blog OR inurl:insights OR inurl:resources)`);
-      searchQueries.push(`${industryTerm} best practices -site:${domain} (inurl:guide OR inurl:resource OR inurl:blog)`);
-      searchQueries.push(`${domainName} how to -site:${domain} (inurl:tutorial OR inurl:guide OR inurl:blog)`);
-    }
-    
-    // Select the primary query for logs but we'll try all of them
-    const directContentQuery = searchQueries[0];
-    
-    console.log(`Searching for relevant content with query: "${directContentQuery}"`);
-    
-    // Array to store Google results
-    let googleResults: any[] = [];
-    
-    // Try each query with Google to gather results, but with much more aggressive early exit for better performance
-    // We'll aim to get enough results faster rather than trying for the full 200
-    // Only try the first query by default to avoid rate limits - we can always try more if this returns nothing
-    let targetQueryCount = Math.min(searchQueries.length, 1); 
-    
-    for (let i = 0; i < targetQueryCount; i++) {
-      const query = searchQueries[i];
-      
-      // Very early exit if we already have some usable results (much lower threshold)
-      if (googleResults.length >= 15) {
-        console.log(`Already have ${googleResults.length} results, which is sufficient - skipping remaining queries to avoid rate limits`);
-        break;
-      }
-      
-      try {
-        console.log(`Scraping Google for query: "${query}"`);
-        // Request fewer results per query for better rate limit handling
-        const maxResultsPerQuery = 50;
-        const results = await scrapeGoogleSearchResults(query, maxResultsPerQuery);
-        
-        if (results.length > 0) {
-          console.log(`Found ${results.length} content results from Google for query "${query}"`);
-          
-          // Filter out duplicates before adding
-          const newResults = results.filter(result => 
-            !googleResults.some(existingResult => 
-              existingResult.link === result.link
-            )
-          );
-          
-          // Mark these as Google results (for tracking)
-          newResults.forEach(result => result.source = 'google');
-          
-          console.log(`Adding ${newResults.length} unique Google results`);
-          googleResults = [...googleResults, ...newResults];
-          
-          // If we have a good number of results already, don't run additional queries
-          if (googleResults.length >= 30) {
-            console.log(`Reached ${googleResults.length} results with first ${i+1} queries, which is sufficient`);
-            break;
-          }
-          
-          // Add a short delay between queries to avoid rate limiting
-          await randomDelay(3000, 5000);
-        }
-      } catch (error) {
-        console.error(`Error scraping Google for query "${query}":`, error);
-        // Add more delays on errors to recover from rate limiting
-        await randomDelay(5000, 10000);
-      }
-    }
-    
-    console.log(`Collected a total of ${googleResults.length} Google search results`);
-    
-    // If we have very few results (less than 10), we need to try more strategies
-    // while still being respectful of rate limits
-    if (googleResults.length < 10 && searchQueries.length > 0) {
-      console.log("Very few results found, trying emergency fallback strategy");
-      
-      // Two emergency approaches:
-      // 1. Try the second query from our list if available (instead of making a new variation)
-      // 2. Only if that fails, try a custom variation as last resort
-      
-      // First attempt: Try the second query in our list if available
-      if (searchQueries.length > 1) {
-        const secondQuery = searchQueries[1];
-        try {
-          console.log(`Trying second query as fallback: "${secondQuery}"`);
-          // Request fewer results for better rate limit handling
-          const results = await scrapeGoogleSearchResults(secondQuery, 15);
-          
-          if (results.length > 0) {
-            // Filter out duplicates
-            const newResults = results.filter(result => 
-              !googleResults.some(existingResult => existingResult.link === result.link)
-            );
-            
-            newResults.forEach(result => result.source = 'google');
-            googleResults = [...googleResults, ...newResults];
-            
-            console.log(`Added ${newResults.length} more results from fallback query`);
-          }
-        } catch (error) {
-          console.error(`Error with fallback query "${secondQuery}":`, error);
-          await randomDelay(7000, 10000); // Extra delay after error
-        }
-      }
-      
-      // If we still have too few results after trying the second query, try a custom variation
-      // as a last resort
-      if (googleResults.length < 5) {
-        // Build a simpler, more generic query that's less likely to trigger rate limits
-        const domainParts = domain.split('.');
-        const domainPrefix = domainParts[0].toLowerCase();
-        const simpleKeyword = keywords?.split(',')[0].trim() || domainPrefix;
-        
-        // Create a simple query with less complexity to reduce rate limit chances
-        const emergencyQuery = `${simpleKeyword} inurl:blog OR inurl:article`;
-        
-        try {
-          console.log(`Trying emergency query as last resort: "${emergencyQuery}"`);
-          const results = await scrapeGoogleSearchResults(emergencyQuery, 10);
-          
-          if (results.length > 0) {
-            // Filter out duplicates
-            const newResults = results.filter(result => 
-              !googleResults.some(existingResult => existingResult.link === result.link)
-            );
-            
-            newResults.forEach(result => result.source = 'google');
-            googleResults = [...googleResults, ...newResults];
-            
-            console.log(`Added ${newResults.length} emergency results`);
-          }
-        } catch (error) {
-          console.error(`Error with emergency query "${emergencyQuery}":`, error);
-        }
-      }
-    }
-    
-    // Use only Google results as requested
-    const allResults = [...googleResults];
-    
-    console.log(`Found total of ${allResults.length} content results across all search engines`);
-    
-    // Enhanced filtering to ONLY include relevant blog posts, articles, and content pages
-    const filteredResults = allResults.filter((result: any) => {
-      try {
-        const url = result.link.toLowerCase();
-        const title = (result.title || '').toLowerCase();
-        const snippet = (result.snippet || '').toLowerCase();
-        
-        // Skip results from the original domain
-        if (url.includes(domain.toLowerCase())) return false;
-        
-        // Skip social media platforms
-        if (url.includes("facebook.com") ||
-            url.includes("twitter.com") ||
-            url.includes("instagram.com") ||
-            url.includes("linkedin.com") ||
-            url.includes("youtube.com") ||
-            url.includes("reddit.com") ||
-            url.includes("pinterest.com")) {
-          return false;
-        }
-        
-        // Skip search engine results pages
-        if (url.includes("google.com/search") ||
-            url.includes("bing.com/search") ||
-            url.includes("yahoo.com/search") ||
-            url.includes("duckduckgo.com/search")) {
-          return false;
-        }
-        
-        // Skip e-commerce and product pages
-        if (url.includes("/product/") ||
-            url.includes("/products/") ||
-            url.includes("/shop/") ||
-            url.includes("/cart/") ||
-            url.includes("/store/") ||
-            url.includes("/catalog/") ||
-            url.includes("amazon.com") ||
-            url.includes("ebay.com") ||
-            url.includes("etsy.com") ||
-            url.includes("walmart.com") ||
-            url.includes("shopify.com")) {
-          return false;
-        }
-        
-        // Skip pages that appear to be homepages or navigation pages
-        const pathSegments = new URL(url).pathname.split('/').filter(Boolean);
-        if (pathSegments.length === 0) return false;
-        
-        // Skip pages that don't have substantial content (based on likely navigation patterns)
-        if (pathSegments.includes("contact") ||
-            pathSegments.includes("about") ||
-            pathSegments.includes("faq") ||
-            pathSegments.includes("sitemap") ||
-            pathSegments.includes("login") ||
-            pathSegments.includes("register") ||
-            pathSegments.includes("terms") ||
-            pathSegments.includes("privacy")) {
-          return false;
-        }
-        
-        // Prioritize content that matches keywords (if provided)
-        const keywordsProvided = keywords?.toLowerCase() || domainName || '';
-        const keywordTerms = keywordsProvided.split(' ').filter(term => term.length > 3);
-        
-        // Check for term match in title or snippet
-        const hasKeywordMatch = keywordTerms.length === 0 || // No keywords specified
-          keywordTerms.some(term => 
-            title.includes(term) || snippet.includes(term)
-          );
-        
-        // Strong content indicators - if these are present, it's very likely content
-        const strongContentIndicators = [
-          "/blog/", "/article/", "/news/", "/post/",
-          "/guide/", "/resources/", "/insights/", "/learn/"
-        ];
-        
-        const hasStrongContentIndicator = strongContentIndicators.some(indicator => 
-          url.includes(indicator)
-        );
-        
-        // Content format indicators in URL or title
-        const contentFormatPatterns = [
-          "how to", "guide", "tutorial", "tips", "best practices",
-          "vs", "versus", "comparison", "review", "ultimate",
-          "complete", "definitive", "essential", "everything you need",
-          "top", "ways to", "steps to", "trends", "insights"
-        ];
-        
-        const hasContentFormat = contentFormatPatterns.some(pattern => 
-          url.includes(pattern) || title.includes(pattern) || snippet.includes(pattern)
-        );
-        
-        // Return true only if it's content-focused AND relevant
-        return (hasStrongContentIndicator || hasContentFormat) && 
-               (hasKeywordMatch || keywordTerms.length === 0) &&
-               pathSegments.length >= 2; // Ensure some depth to the URL
-      } catch (e) {
-        // Skip any URLs that cause parsing errors
-        return false;
-      }
-    });
-    
-    console.log(`Filtered down to ${filteredResults.length} high-quality content results`);
-    
-    // Extract unique competitor domains from these filtered results
-    const contentDomains = filteredResults
-      .map(result => extractDomain(result.link))
-      .filter((d: unknown): d is string => 
-        !!d && typeof d === 'string' && d !== domain &&
-        // Filter non-US domains
-        !d.includes(".co.uk") && 
-        !d.includes(".de") && 
-        !d.includes(".fr") && 
-        !d.includes(".es") && 
-        !d.includes(".ca") && 
-        !d.includes(".au") && 
-        !d.includes(".eu") &&
-        !d.includes(".io") &&
-        !d.includes(".org.uk")
-      );
-    
-    const uniqueContentDomains = Array.from(new Set(contentDomains));
-    console.log(`Found content from ${uniqueContentDomains.length} competitor domains`);
-    
-    // Group results by domain for better organization
-    const resultsByDomain: Record<string, any[]> = {};
-    
-    filteredResults.forEach(result => {
-      const resultDomain = extractDomain(result.link);
-      if (!resultDomain || resultDomain === domain) return;
-      
-      if (!resultsByDomain[resultDomain]) {
-        resultsByDomain[resultDomain] = [];
-      }
-      
-      resultsByDomain[resultDomain].push(result);
-    });
-    
-    // Convert grouped results back to our expected format for processing
-    const allTopContent: {domain: string, result: any}[] = [];
-    
-    Object.entries(resultsByDomain).forEach(([domain, results]) => {
-      // Take up to 12 results per domain (increased from 8)
-      // This helps when we have fewer domains but good article content
-      results.slice(0, 12).forEach(result => {
-        allTopContent.push({
-          domain,
-          result
-        });
-      });
-    });
-    
-    // If we still don't have enough results, add more from domains
-    // that have the most content (likely the most relevant competitors)
-    if (allTopContent.length < 30) {
-      const sortedDomains = Object.entries(resultsByDomain)
-        .sort((a, b) => b[1].length - a[1].length); // Sort by number of results
-      
-      for (const [domain, results] of sortedDomains) {
-        if (allTopContent.length >= 30) break;
-        
-        // Add results starting from the 12th one (index 12) for domains with more content
-        const startIndex = Math.min(12, results.length);
-        for (let i = startIndex; i < results.length; i++) {
-          allTopContent.push({
-            domain,
-            result: results[i]
-          });
-          
-          if (allTopContent.length >= 30) break;
-        }
-      }
-    }
-    
-    // EMERGENCY HANDLING: If we still have very few or no results after all our attempts
-    // due to severe rate limiting, create a very minimal set of content to allow the app to function
-    // This is a last resort to prevent a completely empty response
-    if (allTopContent.length < 3) {
-      console.log("CRITICAL: Very few results obtained after all attempts. Using emergency response strategy.");
-      
-      // Extract the industry from the domain name for relevance
-      const industry = extractIndustryFromDomain(domain);
-      // Use minimal keywords to construct generic but somewhat relevant content
-      const minimalKeywords = keywords ? keywords.split(',')[0].trim() : industry;
-      
-      // Get at least top level domain competitors (simpler sites in same industry)
-      const domainName = domain.replace(/^www\./i, '').split('.')[0].toLowerCase();
-      
-      // Create a small set of placeholder content based on the domain keywords
-      // This structure follows what our application expects but uses on-topic generic content
-      // Using the domainName and keywords to make it somewhat relevant
-      console.log(`Creating minimal emergency content for ${domainName} in ${industry} industry`);
-      
-      // Construct emergency content
-      const emergencyDomains = [
-        `${industry}blog.com`,
-        `${domainName}-industry.com`,
-        `${industry}-insights.org`
-      ];
-      
-      emergencyDomains.forEach((emergencyDomain, index) => {
-        allTopContent.push({
-          domain: emergencyDomain,
-          result: {
-            title: `Guide to ${minimalKeywords} Best Practices`,
-            link: `https://${emergencyDomain}/blog/guide-to-${minimalKeywords.replace(/\s+/g, '-').toLowerCase()}`,
-            snippet: `Comprehensive guide about ${minimalKeywords} in the ${industry} industry. Learn about the latest trends and best practices.`,
-            position: index + 1,
-            source: 'google'
-          }
-        });
-      });
-      
-      console.log(`Added ${emergencyDomains.length} emergency placeholder results to ensure app functionality`);
-    }
-    
-    console.log(`Found ${allTopContent.length} pieces of competitor content`);
-    
-    // Helper function type definitions to avoid issues with strict mode
     type ContentItem = { domain: string, result: any };
+    const contentQueue: ContentItem[] = [];
     
-    // Helper function to process in smaller batches to avoid overwhelming the system
-    // with enhanced error handling and retries for enhanced reliability
-    const processBatch = async (items: ContentItem[], batchSize: number): Promise<any[]> => {
-      const results = [];
+    // Prepare a queue of content to process
+    for (const competitorDomain of competitorDomains) {
+      // Get search results from Google for this competitor
+      const searchResults = await getSearchResults(competitorDomain, 30);
       
-      // Process in smaller batches with more controlled concurrency
-      for (let i = 0; i < items.length; i += batchSize) {
-        // Process each batch sequentially instead of all at once
-        const batch = items.slice(i, i + batchSize);
-        
-        // Use a more resilient approach that can handle individual failures
-        const batchPromises = batch.map(item => {
-          return processContentItem(item)
-            .catch(err => {
-              console.error(`Error processing batch item for ${item.domain}: ${err}`);
-              // Return null on error so the whole batch doesn't fail
-              return null;
-            });
-        });
-        
-        // Wait for all items in current batch to complete
-        const batchResults = await Promise.all(batchPromises);
-        
-        // Add non-null results
-        results.push(...batchResults.filter(r => r !== null));
-        
-        // Add a progressive delay between batches
-        // The delay increases for later batches to reduce likelihood of rate limits
-        if (i + batchSize < items.length) {
-          const progressiveFactor = Math.min(3, 1 + (i / items.length));
-          const delay = 500 * progressiveFactor;
-          await new Promise(resolve => setTimeout(resolve, delay));
-        }
-      }
-      
-      return results;
-    };
+      // Add each search result to the processing queue
+      searchResults.forEach(result => {
+        contentQueue.push({ domain: competitorDomain, result });
+      });
+    }
     
-    // Process an individual content item
+    console.log(`Found ${contentQueue.length} total content items to process`);
+    
+    // Process each content item in the queue
     const processContentItem = async ({ domain: competitorDomain, result }: ContentItem): Promise<any> => {
       try {
-        // Skip if it's somehow the original domain
-        if (competitorDomain === domain) {
+        // Extract URL and title
+        const { link: url, title, snippet } = result;
+        
+        // Only process if we have a valid URL and title
+        if (!url || !title) return null;
+        
+        // Skip if it's the homepage (likely not an article)
+        const urlObj = new URL(url);
+        const path = urlObj.pathname;
+        if (path === '/' || path === '' || path === '/index.html') {
           return null;
         }
         
-        // Try to scrape content
-        let text = "";
-        let title = "";
-        let keywords: string[] = [];
-        
-        try {
-          const scraped = await scrapePageContent(result.link);
-          text = scraped.text;
-          title = scraped.title;
-          keywords = extractKeywords(text || result.snippet || '', 5);
-        } catch (error) {
-          console.error(`Error scraping ${result.link}:`, error);
-          // If scraping fails, still use the SERP data
-          text = result.snippet || "";
-          title = result.title || "";
-          keywords = extractKeywords(text, 5);
+        // Skip if URL contains typical non-article paths
+        const nonArticlePaths = ['/contact', '/about', '/pricing', '/login', '/signup', '/register', '/cart', '/checkout', '/product', '/shop', '/store', '/category'];
+        if (nonArticlePaths.some(p => path.toLowerCase().includes(p))) {
+          return null;
         }
         
-        // Define accurate, conservative traffic ranges
-        const visitRanges = [
-          "Under 500 monthly visits", 
-          "500-1,000 monthly visits",
-          "1,000-2,000 monthly visits",
-          "2,000-5,000 monthly visits",
-          "5,000-10,000 monthly visits",
-          "10,000-20,000 monthly visits", 
-          "20,000+ monthly visits"
-        ];
+        // Estimate traffic level based on domain and position
+        let trafficLevel = 'low';
+        let trafficScore = 10; // Base score
         
-        // Enhanced traffic estimation logic with content type consideration
-        const estimateTrafficLevel = (domainName: string, position: number = 10, url: string, title: string): string => {
-          // Start with base domain popularity factor
-          let domainPopularity = 0;
+        // Bonus for position in search results (1-10)
+        const position = result.position || 0;
+        if (position > 0) {
+          trafficScore += Math.max(0, 11 - position); // Position 1 gets +10, position 10 gets +1
+        }
+        
+        // Bonus for being from Google (main search engine)
+        if (result.source === 'google') {
+          trafficScore += 5;
+        }
+        
+        // Set traffic level based on final score
+        if (trafficScore >= 20) {
+          trafficLevel = 'high';
+        } else if (trafficScore >= 15) {
+          trafficLevel = 'medium';
+        }
+        
+        // Extract keywords from title and snippet
+        let extractedKeywords = extractKeywords(title + ' ' + (snippet || ''), 8);
+        
+        // If user provided keywords, prioritize those that match
+        if (keywords && keywords.trim().length > 0) {
+          const userKeywords = keywords.split(',').map(k => k.trim().toLowerCase());
           
-          // Well-known major domains get higher traffic
-          const majorDomains = ['github.com', 'stackoverflow.com', 'amazon.com', 'microsoft.com', 
-            'apple.com', 'shopify.com', 'ebay.com', 'walmart.com', 'salesforce.com'];
-          
-          const mediumDomains = ['digitalocean.com', 'netlify.com', 'vercel.com', 'heroku.com',
-            'webflow.com', 'etsy.com', 'notion.so', 'godaddy.com', 'medium.com'];
+          // Boost keywords that match user's input
+          extractedKeywords = extractedKeywords.sort((a, b) => {
+            const aMatch = userKeywords.some(uk => a.includes(uk) || uk.includes(a));
+            const bMatch = userKeywords.some(uk => b.includes(uk) || uk.includes(b));
             
-          if (majorDomains.includes(domainName)) {
-            domainPopularity = 5; // Major popular domains
-          } else if (mediumDomains.includes(domainName)) {
-            domainPopularity = 3; // Medium popularity domains
-          } else {
-            domainPopularity = 1; // Standard domains
-          }
-          
-          // Consider position factor (higher = better)
-          const positionFactor = Math.max(0, 10 - position);
-          
-          // Analyze content pattern to determine popularity potential
-          let contentFactor = 0;
-          const contentPatterns = [
-            { regex: /how\s+to|tutorial|guide|step[\s-]by[\s-]step/i, value: 3 }, // How-to content gets more traffic
-            { regex: /\d+\s+(?:ways|tips|tricks|ideas|examples|reasons)/i, value: 3 }, // List posts are popular
-            { regex: /best|top\s+\d+|ultimate|complete/i, value: 2 }, // Superlative content
-            { regex: /vs\.?|versus|comparison|alternative/i, value: 2 }, // Comparison content
-            { regex: /review|overview|analysis/i, value: 1 }, // Review content
-            { regex: /case\s+study|success\s+story/i, value: 1 } // Case studies
-          ];
-          
-          // Check both URL and title for content patterns
-          const checkText = (url + ' ' + title).toLowerCase();
-          for (const pattern of contentPatterns) {
-            if (pattern.regex.test(checkText)) {
-              contentFactor = Math.max(contentFactor, pattern.value);
-            }
-          }
-          
-          // Check if this appears to be a comprehensive resource (which gets more traffic)
-          if (url.includes('/blog/') || url.includes('/articles/')) {
-            contentFactor += 1;
-          }
-          
-          // Calculate combined score
-          const score = domainPopularity + positionFactor + contentFactor;
-          
-          // Map score to traffic ranges with higher fidelity
-          if (score >= 15) return visitRanges[6]; // 20,000+
-          if (score >= 12) return visitRanges[5]; // 10,000-20,000
-          if (score >= 9) return visitRanges[4]; // 5,000-10,000
-          if (score >= 7) return visitRanges[3];  // 2,000-5,000
-          if (score >= 5) return visitRanges[2];  // 1,000-2,000
-          if (score >= 3) return visitRanges[1];  // 500-1,000
-          return visitRanges[0]; // Under 500
-        };
+            if (aMatch && !bMatch) return -1;
+            if (!aMatch && bMatch) return 1;
+            return 0;
+          });
+        }
         
-        // Get traffic level using the enhanced estimation function with content factors
-        // All results now come from Google
-        let sourceBoost = 2; // Standard boost for all results since they're all from Google
-        
-        // Mark the source as Google explicitly
-        result.source = 'google';
-        
-        const trafficLevel = estimateTrafficLevel(
-          competitorDomain, 
-          result.position || 10, 
-          result.link, 
-          title || result.title || ''
-        );
-        
-        // Calculate a numeric traffic score for better sorting later
-        // This converts the traffic string level to a number for sorting
-        let trafficScore = 0;
-        if (trafficLevel.includes("20,000+")) trafficScore = 7;
-        else if (trafficLevel.includes("10,000-20,000")) trafficScore = 6;
-        else if (trafficLevel.includes("5,000-10,000")) trafficScore = 5;
-        else if (trafficLevel.includes("2,000-5,000")) trafficScore = 4;
-        else if (trafficLevel.includes("1,000-2,000")) trafficScore = 3;
-        else if (trafficLevel.includes("500-1,000")) trafficScore = 2;
-        else trafficScore = 1;
-        
-        // Apply source boost to traffic score
-        trafficScore += sourceBoost;
-        
-        // Create competitor content object with traffic score for sorting
+        // Return processed content item
         return {
-          analysisId,
-          title: title || result.title,
-          url: result.link,
+          title,
+          url,
           domain: competitorDomain,
-          publishDate: result.date || "Recent",
-          description: result.snippet || (text ? text.substring(0, 150) + "..." : ""),
+          description: snippet || '',
           trafficLevel,
-          trafficScore, // Add numeric score for sorting
-          source: result.source || 'unknown', // Track the source search engine
-          keywords
+          trafficScore,
+          source: result.source,
+          keywords: extractedKeywords
         };
       } catch (error) {
-        console.error(`Error processing content from ${competitorDomain}:`, error);
+        console.error(`Error processing content item: ${error}`);
         return null;
       }
     };
     
-    // Process content in batches of 5 items at a time to avoid overwhelming the server
-    const competitorContent = (await processBatch(allTopContent, 5))
-      .filter(content => content !== null) as Partial<CompetitorContent & {
-        keywords: string[],
-        trafficScore: number,
-        source: string
-      }>[];
-    
-    // Sort by traffic score and source priority (Google first, then by traffic)
-    competitorContent.sort((a, b) => {
-      // First use the trafficScore which already factors in source and traffic level
-      if (a.trafficScore !== b.trafficScore) {
-        return (b.trafficScore || 0) - (a.trafficScore || 0);
-      }
+    // Process all content items in parallel (with limit)
+    const BATCH_SIZE = 10;
+    for (let i = 0; i < contentQueue.length; i += BATCH_SIZE) {
+      const batch = contentQueue.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.all(batch.map(processContentItem));
       
-      // All sources are Google now, just use alphabetical sorting as a fallback
-      return (a.domain || '').localeCompare(b.domain || '');
-    });
-    
-    // If we have no results, return an empty array instead of using fallback data
-    if (!competitorContent || competitorContent.length === 0) {
-      console.log("No competitor content found, returning empty array");
-      return [];
+      // Filter out null results and add to results array
+      results.push(...batchResults.filter(Boolean));
+      
+      console.log(`Processed batch ${i/BATCH_SIZE + 1}/${Math.ceil(contentQueue.length/BATCH_SIZE)}, got ${batchResults.filter(Boolean).length} valid items`);
+      
+      // Add a short delay between batches to avoid overwhelming resources
+      if (i + BATCH_SIZE < contentQueue.length) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
     }
     
-    // Cache the results before returning (if there are any)
-    if (competitorContent.length > 0) {
-      // Create a cache key that includes domain and keywords
-      const cacheKey = `competitor_content_${domain}_${keywords || ''}`;
-      console.log(`Caching ${competitorContent.length} competitor content results for future use`);
-      cacheResults(cacheKey, competitorContent);
+    // Filter duplicate URLs and create a unique results array
+    const uniqueUrlsMap = new Map<string, number>();
+    const uniqueResults = [];
+    
+    // Use a for loop instead of filter + Set to avoid iteration issues
+    for (let i = 0; i < results.length; i++) {
+      const item = results[i];
+      if (!uniqueUrlsMap.has(item.url)) {
+        uniqueUrlsMap.set(item.url, 1);
+        uniqueResults.push(item);
+      }
     }
     
-    return competitorContent;
+    console.log(`Found ${uniqueResults.length} unique content items after processing`);
+    
+    // Sort by traffic score (descending)
+    return uniqueResults.sort((a, b) => b.trafficScore - a.trafficScore);
   } catch (error) {
-    console.error("Error processing competitor content:", error);
-    // Log the error but return an empty array instead of fallback data
+    console.error(`Error processing competitor content: ${error}`);
     return [];
   }
 };
 
 // Generate insights from competitor content
 export const generateInsights = (competitorContent: Partial<CompetitorContent & {keywords: string[]}>[]): any => {
-  // Extract all keywords
-  const allKeywords = competitorContent.flatMap(content => content.keywords || []);
-  
-  // Count keyword occurrences
-  const keywordCount: Record<string, number> = {};
-  allKeywords.forEach(keyword => {
-    keywordCount[keyword] = (keywordCount[keyword] || 0) + 1;
-  });
-  
-  // Create keyword clusters
-  const keywordEntries = Object.entries(keywordCount);
-  const sortedKeywords = keywordEntries.sort((a, b) => b[1] - a[1]);
-  
-  // Generate color assignments
-  const colors = ['primary', 'secondary', 'accent', 'success', 'warning', 'error'];
-  
-  const keywordClusters = sortedKeywords.slice(0, 6).map(([name, count], index) => ({
-    name,
-    count,
-    color: colors[index % colors.length]
-  }));
-  
-  // Count domains to find key competitors
-  const domainCount: Record<string, number> = {};
-  competitorContent.forEach(content => {
-    if (content.domain) {
-      domainCount[content.domain] = (domainCount[content.domain] || 0) + 1;
-    }
-  });
-  
-  const keyCompetitorsCount = Object.keys(domainCount).length;
-  
-  // Determine top content type based on URLs and titles
-  const contentTypes = [
-    { type: "How-to Guides", regex: /how\sto|guide|tutorial/i },
-    { type: "Listicles", regex: /\d+\s+ways|\d+\s+tips|\d+\s+strategies/i },
-    { type: "Case Studies", regex: /case\s+study|success\s+story|example/i },
-    { type: "Product Reviews", regex: /review|comparison|vs\.?|versus/i },
-    { type: "In-depth Articles", regex: /complete|ultimate|comprehensive|in-depth/i }
-  ];
-  
-  const contentTypeCount: Record<string, number> = {};
-  competitorContent.forEach(content => {
-    const searchText = `${content.title || ''} ${content.description || ''}`.toLowerCase();
+  try {
+    console.log(`Generating insights from ${competitorContent.length} content items`);
     
-    for (const { type, regex } of contentTypes) {
-      if (regex.test(searchText)) {
-        contentTypeCount[type] = (contentTypeCount[type] || 0) + 1;
-        break;
-      }
-    }
-  });
-  
-  // Find top content type
-  let topContentType = "In-depth Articles"; // Default
-  let maxCount = 0;
-  
-  for (const [type, count] of Object.entries(contentTypeCount)) {
-    if (count > maxCount) {
-      maxCount = count;
-      topContentType = type;
-    }
-  }
-  
-  // Calculate content gap score (1-100)
-  const topKeywordsCount = Math.min(10, sortedKeywords.length);
-  const contentGapScore = Math.round(
-    (topKeywordsCount / 10) * 70 + Math.random() * 30
-  );
-  
-  return {
-    topContentType,
-    avgContentLength: `${1500 + Math.round(Math.random() * 1000)} words`,
-    keyCompetitors: `${keyCompetitorsCount} identified`,
-    contentGapScore: `${contentGapScore}/100`,
-    keywordClusters
-  };
-};
-
-// Generate content recommendations based on insights
-export const generateRecommendations = (
-  competitorContent: Partial<CompetitorContent & {keywords: string[]}>[],
-  insights: any
-): any[] => {
-  // Use keyword clusters to generate recommendations
-  const keywordClusters = insights.keywordClusters;
-  
-  // Template recommendations
-  const recommendationTemplates = [
-    {
-      titleTemplate: "Create {topic} Content",
-      descriptionTemplate: "Competitors are gaining significant traffic with {topic} content. Consider creating comprehensive guides focused on {subtopic}.",
-    },
-    {
-      titleTemplate: "Develop {topic} Series",
-      descriptionTemplate: "Analysis shows a gap in {topic} that competitors haven't fully addressed. Focus on creating {subtopic}-friendly tutorials.",
-    },
-    {
-      titleTemplate: "Improve {topic} Strategy",
-      descriptionTemplate: "Top competitors use {topic} with {subtopic} highlighted separately. Consider reformatting your content approach.",
-    }
-  ];
-  
-  // Generate recommendations using the top 3 keyword clusters
-  const recommendations = keywordClusters.slice(0, 3).map((cluster: any, index: number) => {
-    const template = recommendationTemplates[index % recommendationTemplates.length];
-    const relatedKeywords = competitorContent
-      .flatMap(content => (content.keywords || []).filter(kw => 
-        kw.includes(cluster.name.toLowerCase()) || 
-        cluster.name.toLowerCase().includes(kw)
-      ))
-      .filter((value, index, self) => self.indexOf(value) === index)
-      .slice(0, 3);
+    // Calculate average content length
+    const avgContentLength = competitorContent.length === 0 
+      ? 'Unknown'
+      : `${competitorContent.length} articles`;
     
-    // If we don't have enough related keywords, add some generic ones
-    const finalKeywords = [...relatedKeywords];
-    while (finalKeywords.length < 3) {
-      const genericKeywords = ["optimization", "strategy", "analysis", "trends", "techniques", "best practices"];
-      const randomKeyword = genericKeywords[Math.floor(Math.random() * genericKeywords.length)];
-      if (!finalKeywords.includes(randomKeyword)) {
-        finalKeywords.push(randomKeyword);
+    // Find key competitors by counting domain occurrences
+    const domainCounts: {[key: string]: number} = {};
+    competitorContent.forEach(item => {
+      if (item.domain) {
+        domainCounts[item.domain] = (domainCounts[item.domain] || 0) + 1;
       }
+    });
+    
+    // Sort domains by count and get top 3
+    const topDomains = Object.entries(domainCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([domain]) => domain)
+      .join(', ');
+    
+    // Calculate top content type (based on most common keywords)
+    const allKeywords: string[] = [];
+    competitorContent.forEach(item => {
+      if (item.keywords && Array.isArray(item.keywords)) {
+        allKeywords.push(...item.keywords);
+      }
+    });
+    
+    // Count keyword occurrences
+    const keywordCounts: {[key: string]: number} = {};
+    allKeywords.forEach(keyword => {
+      keywordCounts[keyword] = (keywordCounts[keyword] || 0) + 1;
+    });
+    
+    // Get top keywords
+    const topKeywords = Object.entries(keywordCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([keyword]) => keyword);
+    
+    const topContentType = topKeywords.length > 0 
+      ? topKeywords[0]
+      : 'Unknown';
+    
+    // Cluster keywords into topic groups
+    const MIN_GROUP_SIZE = 2;
+    const topicClusters: {[key: string]: string[]} = {};
+    
+    // Create initial clusters based on keyword similarity
+    allKeywords.forEach(keyword => {
+      let assigned = false;
+      
+      // Try to assign to existing cluster
+      for (const [topic, keywords] of Object.entries(topicClusters)) {
+        // Check if this keyword is similar to the topic or any keyword in the cluster
+        if (keyword.includes(topic) || 
+            topic.includes(keyword) || 
+            keywords.some(k => k.includes(keyword) || keyword.includes(k))) {
+          topicClusters[topic].push(keyword);
+          assigned = true;
+          break;
+        }
+      }
+      
+      // If not assigned to existing cluster, create a new one
+      if (!assigned && keywordCounts[keyword] >= MIN_GROUP_SIZE) {
+        topicClusters[keyword] = [keyword];
+      }
+    });
+    
+    // Filter out small clusters and create final cluster objects with colors
+    const COLORS = [
+      '#3b82f6', // blue 
+      '#ef4444', // red
+      '#10b981', // green
+      '#f59e0b', // amber
+      '#8b5cf6', // violet
+      '#ec4899', // pink
+      '#6366f1', // indigo
+      '#14b8a6', // teal
+      '#f97316', // orange
+      '#a855f7'  // purple
+    ];
+    
+    const keywordClusters = Object.entries(topicClusters)
+      .filter(([_, keywords]) => keywords.length >= MIN_GROUP_SIZE)
+      .map(([topic, keywords], index) => ({
+        name: topic,
+        count: keywords.length,
+        color: COLORS[index % COLORS.length]
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+    
+    // Calculate content gap score based on distribution of topics
+    let contentGapScore = 'Medium';
+    if (keywordClusters.length >= 4) {
+      contentGapScore = 'High';
+    } else if (keywordClusters.length <= 1) {
+      contentGapScore = 'Low';
     }
     
     return {
-      title: template.titleTemplate.replace('{topic}', cluster.name).replace('{subtopic}', finalKeywords[0]),
-      description: template.descriptionTemplate
-        .replace('{topic}', cluster.name.toLowerCase())
-        .replace('{subtopic}', finalKeywords[1]),
-      keywords: finalKeywords,
-      color: cluster.color
+      topContentType,
+      avgContentLength,
+      keyCompetitors: topDomains || 'None identified',
+      contentGapScore,
+      keywordClusters
     };
-  });
-  
-  return recommendations;
+  } catch (error) {
+    console.error(`Error generating insights: ${error}`);
+    
+    // Return basic fallback insights
+    return {
+      topContentType: 'Unknown',
+      avgContentLength: 'Unknown',
+      keyCompetitors: 'None identified',
+      contentGapScore: 'Medium',
+      keywordClusters: []
+    };
+  }
 };
+
+// Generate content recommendations
+export const generateRecommendations = (
+  insights: any,
+  competitorContent: any[]
+): any[] => {
+  try {
+    // Extract keyword clusters for recommendations
+    const { keywordClusters } = insights;
+    
+    if (!keywordClusters || keywordClusters.length === 0) {
+      console.log('No keyword clusters found for recommendations');
+      return [];
+    }
+    
+    console.log(`Generating recommendations from ${keywordClusters.length} keyword clusters`);
+    
+    // Collect all keywords from competitor content
+    const allKeywords: string[] = [];
+    competitorContent.forEach(item => {
+      if (item.keywords && Array.isArray(item.keywords)) {
+        allKeywords.push(...item.keywords);
+      }
+    });
+    
+    // Generate a recommendation for each cluster
+    return keywordClusters.map((cluster: { name: string; count: number; color: string }) => {
+      // Find complementary keywords from all content
+      const relatedKeywords = allKeywords.filter(keyword => 
+        !cluster.name.includes(keyword) && 
+        !keyword.includes(cluster.name) &&
+        keyword.length > 3
+      );
+      
+      // Count occurrences of each related keyword
+      const keywordCounts: {[key: string]: number} = {};
+      relatedKeywords.forEach(keyword => {
+        keywordCounts[keyword] = (keywordCounts[keyword] || 0) + 1;
+      });
+      
+      // Get top related keywords
+      const topRelatedKeywords = Object.entries(keywordCounts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([keyword]) => keyword);
+      
+      // Combine primary cluster keyword with related keywords
+      const finalKeywords = [cluster.name, ...topRelatedKeywords].slice(0, 5);
+      
+      // Create title template
+      const titleTemplates = [
+        'The Ultimate Guide to {topic}',
+        'How to {topic} in {year}',
+        'Top 10 {topic} Strategies',
+        '{topic} Best Practices',
+        '{topic}: A Complete Guide',
+        'Why {topic} Matters for Your Business',
+        'Mastering {topic}',
+        '{topic} Tips for Better Results',
+        'The Future of {topic}',
+        '{topic} vs {subtopic}: Which is Better?'
+      ];
+      
+      // Create description template
+      const descriptionTemplates = [
+        "Learn everything you need to know about {topic}, including {subtopic} strategies and best practices.",
+        "Discover how {topic} can transform your business with practical {subtopic} tips.",
+        "Explore the latest {topic} trends and how they relate to {subtopic} in today's market.",
+        "Everything you need to know about {topic} and how it impacts {subtopic} in your industry.",
+        "Master {topic} with our comprehensive guide covering essential {subtopic} techniques."
+      ];
+      
+      // Select random templates
+      const year = new Date().getFullYear();
+      const titleTemplate = titleTemplates[Math.floor(Math.random() * titleTemplates.length)]
+        .replace('{year}', year.toString());
+      const descriptionTemplate = descriptionTemplates[Math.floor(Math.random() * descriptionTemplates.length)];
+      
+      // Create recommendation
+      return {
+        title: titleTemplate.replace('{topic}', cluster.name),
+        description: descriptionTemplate
+          .replace('{topic}', cluster.name.toLowerCase())
+          .replace('{subtopic}', finalKeywords[1]),
+        keywords: finalKeywords,
+        color: cluster.color
+      };
+    });
+  } catch (error) {
+    console.error(`Error generating recommendations: ${error}`);
+    return [];
+  }
+};
+
+// Types for TypeScript
+interface CompetitorContent {
+  id: number;
+  title: string;
+  url: string;
+  domain: string;
+  description?: string;
+  trafficLevel?: string;
+  trafficScore?: number;
+  source?: string;
+  keywords: string[];
+}
