@@ -149,11 +149,26 @@ const refreshProxyList = async (): Promise<void> => {
         console.log(`Found ${proxyStrings.length} proxies from free-proxy`);
         
         // Process each proxy string
-        proxyStrings.forEach((proxyStr: string) => {
+        // @ts-ignore - Type definitions don't match implementation
+        proxyStrings.forEach((proxyItem: any) => {
           try {
-            // @ts-ignore - Type definitions don't match implementation
-            const [host, portStr] = proxyStr.split(':');
-            const port = parseInt(portStr, 10);
+            // Depending on what the API actually returns, handle either string or object format
+            let host: string;
+            let portStr: string;
+            
+            if (typeof proxyItem === 'string') {
+              // If API returns strings in format 'host:port'
+              [host, portStr] = proxyItem.split(':');
+            } else if (proxyItem && typeof proxyItem === 'object') {
+              // If API returns objects with ip and port properties
+              host = proxyItem.ip || '';
+              portStr = proxyItem.port || '';
+            } else {
+              // Skip invalid items
+              return;
+            }
+            
+            const port = parseInt(String(portStr), 10);
             
             if (host && !isNaN(port)) {
               newProxies.push({
@@ -162,11 +177,11 @@ const refreshProxyList = async (): Promise<void> => {
                 protocols: ['https', 'http'],
                 lastUsed: 0,
                 failCount: 0,
-                country: 'unknown'
+                country: proxyItem.country || 'unknown'
               });
             }
           } catch (parseErr) {
-            console.error(`Error parsing proxy string: ${proxyStr}`, parseErr);
+            console.error(`Error parsing proxy item:`, parseErr);
           }
         });
       } else {

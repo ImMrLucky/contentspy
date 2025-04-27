@@ -72,7 +72,9 @@ export class MemStorage implements IStorage {
   async createAnalysis(analysis: InsertWebsiteAnalysis): Promise<WebsiteAnalysis> {
     const id = this.currentAnalysisId++;
     const createdAt = new Date();
-    const newAnalysis: WebsiteAnalysis = { ...analysis, id, createdAt };
+    // Ensure userId is either a number or null, not undefined
+    const userId = analysis.userId === undefined ? null : analysis.userId;
+    const newAnalysis: WebsiteAnalysis = { ...analysis, id, createdAt, userId };
     this.analyses.set(id, newAnalysis);
     return newAnalysis;
   }
@@ -91,7 +93,17 @@ export class MemStorage implements IStorage {
   
   async createCompetitorContent(content: InsertCompetitorContent): Promise<CompetitorContent> {
     const id = this.currentContentId++;
-    const newContent: CompetitorContent = { ...content, id };
+    // Ensure analysisId is either a number or null, not undefined
+    const analysisId = content.analysisId === undefined ? null : content.analysisId;
+    const newContent: CompetitorContent = { 
+      ...content, 
+      id, 
+      analysisId,
+      // Ensure nullable fields have default values
+      publishDate: content.publishDate || null,
+      description: content.description || null,
+      trafficLevel: content.trafficLevel || null
+    };
     this.contents.set(id, newContent);
     return newContent;
   }
@@ -104,7 +116,9 @@ export class MemStorage implements IStorage {
   
   async createKeyword(keyword: InsertKeyword): Promise<Keyword> {
     const id = this.currentKeywordId++;
-    const newKeyword: Keyword = { ...keyword, id };
+    // Ensure contentId is either a number or null, not undefined
+    const contentId = keyword.contentId === undefined ? null : keyword.contentId;
+    const newKeyword: Keyword = { ...keyword, id, contentId };
     this.keywordsList.set(id, newKeyword);
     return newKeyword;
   }
