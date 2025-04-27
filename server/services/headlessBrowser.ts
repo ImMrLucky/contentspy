@@ -60,7 +60,7 @@ const requestHistory = {
 
 // Constants for browser configuration
 const BROWSER_CONFIG: any = {
-  headless: true, // Use headless mode
+  headless: 'new', // Use new headless mode
   args: [
     '--no-sandbox',
     '--disable-setuid-sandbox',
@@ -84,7 +84,8 @@ const BROWSER_CONFIG: any = {
     height: 800
   },
   ignoreHTTPSErrors: true,
-  timeout: 30000 // 30 seconds timeout
+  timeout: 30000, // 30 seconds timeout
+  executablePath: '/usr/bin/chromium-browser', // Use system-installed Chrome/Chromium
 };
 
 // Helper function to get a new browser instance
