@@ -571,6 +571,11 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
       return cachedResults;
     }
     
+    // Circuit breaker pattern variables to handle rate limiting
+    let circuitBreakerTripped = false;
+    let consecutiveFailures = 0;
+    const MAX_CONSECUTIVE_FAILURES = 5;
+    
     // Initialize our proxy list if needed
     await ensureProxiesInitialized();
     
@@ -1106,7 +1111,31 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
       const page = Math.floor(totalPages / methodCount);
       
       console.log(`Trying scraping method ${methodToUse + 1}, page ${page + 1}`);
-      success = await method(page);
+      
+      try {
+        success = await method(page);
+        
+        if (success) {
+          // Reset consecutive failures counter on success
+          consecutiveFailures = 0;
+        } else {
+          // Increment failure counter
+          consecutiveFailures++;
+          console.log(`Scraping attempt failed. Consecutive failures: ${consecutiveFailures}`);
+          
+          // Trip circuit breaker if too many consecutive failures
+          if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES && !circuitBreakerTripped) {
+            circuitBreakerTripped = true;
+            console.log('⚠️ Circuit breaker tripped - switching to conservative mode');
+            
+            // Wait longer before continuing when circuit breaker trips
+            await randomDelay(5000, 8000);
+          }
+        }
+      } catch (methodError) {
+        console.error(`Error in scraping method ${methodToUse + 1}:`, methodError);
+        consecutiveFailures++;
+      }
       
       // Rotate methods whether successful or not
       methodIndex++;
@@ -1116,6 +1145,12 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
       if (totalPages >= 6 && allResults.length === 0) {
         console.log(`No results found after ${totalPages} attempts - giving up`);
         break;
+      }
+      
+      // If circuit breaker is tripped, add longer delays between requests
+      if (circuitBreakerTripped) {
+        console.log('Conservative mode active - using longer delays between requests');
+        await randomDelay(3000, 5000);
       }
       
       // Enhanced quick exit conditions:
