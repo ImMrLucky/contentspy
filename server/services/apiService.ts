@@ -6,23 +6,33 @@ import axios from 'axios';
 import * as cheerio from 'cheerio';
 import natural from 'natural';
 import { HttpProxyAgent } from 'http-proxy-agent';
-import { 
-  scrapeGoogleWithHeadlessBrowser, 
-  getSimilarWebsitesWithHeadlessBrowser 
-} from './headlessBrowser';
-import {
-  scrapeGoogleWithHttp,
-  getSimilarWebsitesWithHttp
-} from './httpScraper';
-import {
-  scrapeGoogleWithSelenium,
-  getSimilarWebsitesWithSelenium
-} from './seleniumScraper';
+
+// Import scrapers in priority order:
+// 1. Python scraper (most effective against CAPTCHA)
 import {
   scrapeGoogleWithPython,
   getSimilarWebsitesWithPython
 } from './pythonBridge';
-// Import default export from free-proxy
+
+// 2. HTTP scraper with POST requests (enhanced anti-detection)
+import {
+  scrapeGoogleWithHttp,
+  getSimilarWebsitesWithHttp
+} from './httpScraper';
+
+// 3. Headless browser (third priority)
+import { 
+  scrapeGoogleWithHeadlessBrowser, 
+  getSimilarWebsitesWithHeadlessBrowser 
+} from './headlessBrowser';
+
+// 4. Selenium as last resort (most likely to be detected)
+import {
+  scrapeGoogleWithSelenium,
+  getSimilarWebsitesWithSelenium
+} from './seleniumScraper';
+
+// Import proxy management
 import ProxyList from 'free-proxy';
 
 // For caching search results
@@ -1175,19 +1185,34 @@ export const processCompetitorContent = async (
       try {
         console.log(`Finding article content for competitor: ${competitorDomain}`);
         
-        // Create search queries focusing on article/blog content
+        // Skip non-US domains (focusing strictly on US competitors as requested)
+        if (!competitorDomain.endsWith('.com') && 
+            !competitorDomain.endsWith('.org') && 
+            !competitorDomain.endsWith('.net') && 
+            !competitorDomain.endsWith('.us')) {
+          console.log(`Skipping non-US domain: ${competitorDomain}`);
+          continue;
+        }
+        
+        // Create search queries focusing strictly on article/blog content
+        // Add more specific terms to filter out product pages and home pages
         const searchQueries = [
-          `site:${competitorDomain} article`,
-          `site:${competitorDomain} blog`,
-          `site:${competitorDomain} post`, 
-          `site:${competitorDomain} guide`
+          `site:${competitorDomain} article -"product" -"pricing" -"shop"`,
+          `site:${competitorDomain} blog -"product" -"pricing" -"shop"`,
+          `site:${competitorDomain} post -"product" -"pricing" -"shop"`, 
+          `site:${competitorDomain} guide -"product" -"pricing" -"shop"`,
+          `site:${competitorDomain} insights -"product" -"pricing" -"shop"`,
+          `site:${competitorDomain} analysis -"product" -"pricing" -"shop"`,
+          `site:${competitorDomain}/blog/ -"product" -"pricing" -"shop"`,
+          `site:${competitorDomain}/articles/ -"product" -"pricing" -"shop"`
         ];
         
         // Add keyword-specific searches if we have keywords
         if (keywordsArray.length > 0) {
           keywordsArray.forEach(keyword => {
-            searchQueries.push(`site:${competitorDomain} ${keyword} article`);
-            searchQueries.push(`site:${competitorDomain} ${keyword} blog`);
+            searchQueries.push(`site:${competitorDomain} ${keyword} article -"product" -"pricing" -"shop"`);
+            searchQueries.push(`site:${competitorDomain} ${keyword} blog -"product" -"pricing" -"shop"`);
+            searchQueries.push(`site:${competitorDomain}/blog/ ${keyword} -"product" -"pricing" -"shop"`);
           });
         }
         
@@ -1225,30 +1250,64 @@ export const processCompetitorContent = async (
                   const urlObj = new URL(url);
                   const path = urlObj.pathname;
                   if (path === '/' || path === '' || path === '/index.html') {
+                    console.log(`Skipping homepage URL: ${url}`);
                     continue;
                   }
                   
                   // Skip if URL contains typical non-article paths
                   const nonArticlePaths = ['/contact', '/about', '/pricing', '/login', '/signup', 
                                           '/register', '/cart', '/checkout', '/product', '/shop', 
-                                          '/store', '/category'];
+                                          '/store', '/category', '/services', '/faq', '/order',
+                                          '/cart', '/account', '/profile', '/terms', '/privacy'];
                   if (nonArticlePaths.some(p => path.toLowerCase().includes(p))) {
+                    console.log(`Skipping non-article URL path: ${path}`);
                     continue;
+                  }
+                  
+                  // Look for signals that this is an article or blog post
+                  const articleSignals = ['/blog/', '/article/', '/post/', '/news/', 
+                                        '/resource/', '/guide/', '/learn/', '/insights/',
+                                        '/publications/', '/content/'];
+                  
+                  // Boost traffic score for URLs that appear to be blog posts or articles
+                  let isArticleUrl = articleSignals.some(p => path.toLowerCase().includes(p));
+                  
+                  // Also check for date patterns in URL which often indicate blog posts
+                  // e.g., /2023/04/ or /2023-04-15/ or similar patterns
+                  const datePatterns = [
+                    /\/\d{4}\/\d{2}\//, // /YYYY/MM/
+                    /\/\d{4}-\d{2}-\d{2}\//, // /YYYY-MM-DD/
+                    /\/\d{4}\/\d{2}\/\d{2}\//, // /YYYY/MM/DD/
+                  ];
+                  
+                  if (!isArticleUrl) {
+                    isArticleUrl = datePatterns.some(pattern => pattern.test(path));
                   }
                   
                   // Calculate traffic score (higher position = more traffic)
                   let trafficScore = 10; // Base score
+                  
+                  // Boost score for confirmed article URLs
+                  if (isArticleUrl) {
+                    trafficScore += 5; // Significant boost for confirmed articles
+                    console.log(`Boosting traffic score for article URL: ${url}`);
+                  }
                   
                   if (position > 0) {
                     // Position 1 gets +10 bonus, position 10 gets +1 bonus
                     trafficScore += Math.max(0, 11 - position);
                   }
                   
+                  // Add a small boost for domains ending with .com (likely US-based)
+                  if (competitorDomain.endsWith('.com')) {
+                    trafficScore += 2;
+                  }
+                  
                   // Determine traffic level based on score
                   let trafficLevel = 'low';
-                  if (trafficScore >= 17) {
+                  if (trafficScore >= 20) {
                     trafficLevel = 'high';
-                  } else if (trafficScore >= 13) {
+                  } else if (trafficScore >= 15) {
                     trafficLevel = 'medium';
                   }
                   
