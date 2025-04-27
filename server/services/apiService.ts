@@ -18,6 +18,10 @@ import {
   scrapeGoogleWithSelenium,
   getSimilarWebsitesWithSelenium
 } from './seleniumScraper';
+import {
+  scrapeGoogleWithPython,
+  getSimilarWebsitesWithPython
+} from './pythonBridge';
 // Import default export from free-proxy
 import ProxyList from 'free-proxy';
 
@@ -733,25 +737,28 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
       return cachedResults;
     }
     
-    // Try Selenium first (most effective against CAPTCHA)
+    // Make proxies available globally for Python and other scrapers
+    global.availableProxies = availableProxies;
+    
+    // Try Python-based scraper first (requests-html + pyppeteer, most effective against CAPTCHA)
     try {
-      console.log(`Trying Selenium for Google scraping: "${query}"`);
-      const seleniumResults = await scrapeGoogleWithSelenium(query, limit);
+      console.log(`Trying Python scraper with requests-html and pyppeteer: "${query}"`);
+      const pythonResults = await scrapeGoogleWithPython(query, limit);
       
       // Cache results if we found any
-      if (seleniumResults.length > 0) {
-        console.log(`Selenium succeeded with ${seleniumResults.length} results`);
-        cacheResults(cacheKey, seleniumResults);
-        return seleniumResults;
+      if (pythonResults && pythonResults.length > 0) {
+        console.log(`Python scraper succeeded with ${pythonResults.length} results`);
+        cacheResults(cacheKey, pythonResults);
+        return pythonResults;
       } else {
-        console.log(`Selenium returned 0 results, trying headless browser fallback...`);
+        console.log(`Python scraper returned 0 results, trying headless browser fallback...`);
       }
-    } catch (seleniumError) {
-      console.error(`Error in Selenium Google scraping: ${seleniumError}`);
+    } catch (pythonError) {
+      console.error(`Error in Python scraper: ${pythonError}`);
       console.log(`Falling back to headless browser method...`);
     }
     
-    // If Selenium fails, try headless browser next
+    // Try headless browser second
     try {
       console.log(`Trying headless browser for Google scraping: "${query}"`);
       const results = await scrapeGoogleWithHeadlessBrowser(query, limit);
@@ -762,28 +769,46 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
         cacheResults(cacheKey, results);
         return results;
       } else {
-        console.log(`Headless browser returned 0 results, trying HTTP fallback...`);
+        console.log(`Headless browser returned 0 results, trying enhanced HTTP fallback...`);
       }
     } catch (puppeteerError) {
       console.error(`Error in headless browser Google scraping: ${puppeteerError}`);
-      console.log(`Falling back to HTTP scraping method...`);
+      console.log(`Falling back to enhanced HTTP scraping method...`);
     }
     
-    // If both Selenium and headless browser fail, try using HTTP scraper as last resort
+    // Try enhanced HTTP scraper with POST requests
     try {
-      console.log(`Trying HTTP scraper fallback for: "${query}"`);
+      console.log(`Trying enhanced HTTP scraper with POST for: "${query}"`);
       const httpResults = await scrapeGoogleWithHttp(query, limit);
       
       // Cache results if we found any
       if (httpResults.length > 0) {
-        console.log(`HTTP scraper succeeded with ${httpResults.length} results`);
+        console.log(`Enhanced HTTP scraper succeeded with ${httpResults.length} results`);
         cacheResults(cacheKey, httpResults);
         return httpResults;
       } else {
-        console.log(`HTTP scraper returned 0 results`);
+        console.log(`Enhanced HTTP scraper returned 0 results, trying Selenium as last resort...`);
       }
     } catch (httpError) {
-      console.error(`Error in HTTP fallback scraping: ${httpError}`);
+      console.error(`Error in enhanced HTTP scraping: ${httpError}`);
+      console.log(`Falling back to Selenium as last resort...`);
+    }
+    
+    // Try Selenium as last resort (moved from first to last as you requested)
+    try {
+      console.log(`Trying Selenium as last resort for: "${query}"`);
+      const seleniumResults = await scrapeGoogleWithSelenium(query, limit);
+      
+      // Cache results if we found any
+      if (seleniumResults.length > 0) {
+        console.log(`Selenium succeeded with ${seleniumResults.length} results`);
+        cacheResults(cacheKey, seleniumResults);
+        return seleniumResults;
+      } else {
+        console.log(`Selenium returned 0 results`);
+      }
+    } catch (seleniumError) {
+      console.error(`Error in Selenium Google scraping: ${seleniumError}`);
     }
     
     console.log(`All scraping methods failed, returning empty results`);
