@@ -83,33 +83,55 @@ async function createDriver() {
     const userAgent = getRandomUserAgent();
     const proxy = await getProxy();
     
-    // Configure Chrome options with anti-detection measures
+    // Configure Chrome options with advanced anti-detection measures
     const chromeOptions = new ChromeOptions();
     
-    // Add basic browser flags for stability
+    // Generate random viewport dimensions (realistic desktop sizes)
+    const width = 1100 + Math.floor(Math.random() * 800); // 1100-1900
+    const height = 700 + Math.floor(Math.random() * 400); // 700-1100
+    
+    // Add enhanced browser flags to appear more like a regular user
     chromeOptions.addArguments(
       '--no-sandbox',
       '--disable-dev-shm-usage',
       '--disable-blink-features=AutomationControlled',
       '--disable-extensions',
       '--disable-notifications',
-      '--window-size=1920,1080',
-      `--user-agent=${userAgent}`
+      `--window-size=${width},${height}`,
+      `--user-agent=${userAgent}`,
+      '--disable-web-security', // Helps with some CAPTCHA scenarios
+      '--disable-features=IsolateOrigins,site-per-process', // Disables site isolation
+      '--disable-site-isolation-trials',
+      '--disable-features=BlockInsecurePrivateNetworkRequests',
+      `--disable-setuid-sandbox`,
+      '--disable-infobars',
+      '--lang=en-US,en;q=0.9',
+      '--disable-gpu', // Sometimes helps with CAPTCHA detection
+      `--use-fake-ui-for-media-stream`,
+      '--disable-popup-blocking'
     );
 
-    // Add experimental settings to evade detection 
-    // Use setChromeBinaryPath instead of setExperimentalOption for TypeScript compatibility
-    (chromeOptions as any).setExperimentalOption('excludeSwitches', ['enable-automation']);
+    // Add experimental settings to evade detection more effectively
+    // Cast to any to avoid TypeScript errors with these experimental options
+    (chromeOptions as any).setExperimentalOption('excludeSwitches', ['enable-automation', 'enable-logging']);
     (chromeOptions as any).setExperimentalOption('useAutomationExtension', false);
     
-    // Add random preferences to mimic real user browser settings
+    // Add more detailed user preferences to appear more human-like
     const prefs = {
-      'intl.accept_languages': 'en-US,en',
+      'intl.accept_languages': 'en-US,en;q=0.9',
       'profile.default_content_setting_values.notifications': 2,
       'credentials_enable_service': false,
       'profile.password_manager_enabled': false,
-      // Random time zone to prevent fingerprinting
+      'profile.default_content_setting_values.cookies': Math.random() > 0.2 ? 1 : 2, // Usually accept cookies
+      'profile.cookie_controls_mode': 0,
+      'profile.default_content_setting_values.images': 1,
+      'profile.default_content_setting_values.javascript': 1,
+      'profile.default_content_setting_values.plugins': 1,
+      'profile.default_content_setting_values.popups': Math.random() > 0.7 ? 1 : 2,
       'profile.default_content_setting_values.geolocation': Math.random() > 0.5 ? 1 : 2,
+      'profile.default_content_setting_values.media_stream': Math.random() > 0.5 ? 1 : 2,
+      'profile.managed_default_content_settings.images': 1,
+      'profile.managed_default_content_settings.javascript': 1,
     };
     chromeOptions.setUserPreferences(prefs);
     
@@ -125,41 +147,90 @@ async function createDriver() {
       .setChromeOptions(chromeOptions)
       .build();
     
-    // Add anti-detection script after page loads
+    // Add enhanced anti-detection script after page loads
     await driver.executeScript(`
-      // Overwrite webdriver properties
+      // Advanced anti-detection measures
+      
+      // 1. Mask WebDriver property - most important anti-detection measure
       Object.defineProperty(navigator, 'webdriver', {
         get: () => false,
         configurable: true
       });
       
-      // Mock permissions API if it exists
+      // 2. Mock permissions API with more realistic behavior
       if (navigator.permissions) {
+        const originalQuery = navigator.permissions.query;
         navigator.permissions.query = (parameters) => {
-          return Promise.resolve({ state: 'granted', onchange: null });
+          if (parameters.name === 'notifications') {
+            return Promise.resolve({ state: 'prompt', onchange: null });
+          }
+          return originalQuery(parameters);
         };
       }
       
-      // Modify navigator properties to appear more human
+      // 3. Add fake plugins that real browsers have
       const oldPlugins = navigator.plugins;
       Object.defineProperty(navigator, 'plugins', {
-        get: () => [].slice.call(oldPlugins).concat([{
-          name: 'Chrome PDF Plugin',
-          filename: 'internal-pdf-viewer',
-          description: 'Portable Document Format'
-        }])
+        get: () => [].slice.call(oldPlugins).concat([
+          {
+            name: 'Chrome PDF Plugin',
+            filename: 'internal-pdf-viewer',
+            description: 'Portable Document Format'
+          },
+          {
+            name: 'Chrome PDF Viewer',
+            filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai',
+            description: 'Portable Document Format'
+          },
+          {
+            name: 'Native Client',
+            filename: 'internal-nacl-plugin',
+            description: 'Native Client'
+          }
+        ]),
+        enumerable: true
       });
       
-      // Make navigator.languages ennumerable again
+      // 4. Languages with proper formatting and enumeration
       Object.defineProperty(navigator, 'languages', {
         get: () => ['en-US', 'en'],
         enumerable: true
       });
       
-      // Add a fake chrome object if it doesn't exist
+      // 5. Add detailed chrome object that matches real browsers
       if (!window.chrome) {
-        window.chrome = {
-          runtime: {}
+        window.chrome = {};
+      }
+      
+      // Create a realistic chrome object structure
+      window.chrome = {
+        ...window.chrome,
+        runtime: {
+          ...(window.chrome.runtime || {}),
+          connect: function() {},
+          sendMessage: function() {}
+        },
+        loadTimes: function() {},
+        csi: function() { return { startE: Date.now(), onloadT: Date.now(), pageT: Date.now(), tran: 15 }; },
+        app: {
+          isInstalled: false,
+          getDetails: function() {},
+          getIsInstalled: function() {}
+        }
+      };
+      
+      // 6. Add WebGL properties to make fingerprinting less reliable
+      if (window.WebGLRenderingContext) {
+        const getParameter = WebGLRenderingContext.prototype.getParameter;
+        WebGLRenderingContext.prototype.getParameter = function(parameter) {
+          // Add noise to WebGL fingerprinting parameters
+          if (parameter === 37445) {
+            return 'Google Inc. (Intel)'; // Random vendor
+          }
+          if (parameter === 37446) {
+            return 'ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11 vs_5_0 ps_5_0, D3D11)'; // Random renderer
+          }
+          return getParameter.apply(this, arguments);
         };
       }
     `);
@@ -172,26 +243,72 @@ async function createDriver() {
 }
 
 /**
- * Helper function to add randomized human-like delays
+ * Helper function to add randomized human-like delays with natural variation
  */
 async function randomDelay(min: number, max: number) {
-  const delay = Math.floor(Math.random() * (max - min + 1)) + min;
+  // Add slight randomization to make delays more natural and less predictable
+  const baseDelay = Math.floor(Math.random() * (max - min + 1)) + min;
+  
+  // Sometimes add a small additional random variation (simulates human inconsistency)
+  const extraVariation = Math.random() > 0.7 ? Math.floor(Math.random() * 200) : 0;
+  const delay = baseDelay + extraVariation;
+  
   console.log(`Adding human-like delay: ${delay}ms`);
   await new Promise(resolve => setTimeout(resolve, delay));
 }
 
 /**
- * Human-like typing function with realistic timing
+ * Enhanced human-like typing function with realistic timing and occasional mistakes
  */
 async function humanTypeInto(element: WebElement, text: string) {
-  // Split text into chunks to simulate natural typing patterns
-  const chunks = text.match(/.{1,4}|.+/g) || [];
+  // Determine if we'll simulate a typing error (10% chance)
+  const makeTypingError = Math.random() < 0.1;
   
-  for (const chunk of chunks) {
-    // Type each chunk with a random delay
+  // Choose typing style - sometimes humans type in whole words, sometimes character by character
+  // This makes the typing pattern less predictable and more realistic
+  const typingStyle = Math.random();
+  
+  let chunks = [];
+  
+  if (typingStyle < 0.3) {
+    // Type character by character (slow, careful typist)
+    chunks = text.split('');
+  } else if (typingStyle < 0.7) {
+    // Type in small chunks of 2-4 characters (average typist)
+    chunks = text.match(/.{1,4}|.+/g) || [];
+  } else {
+    // Type in word chunks (fast typist)
+    chunks = text.split(' ').map(word => word + ' ');
+  }
+  
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    
+    // Type current chunk with variable speed
+    const typingVariation = Math.random() > 0.7 ? 1.5 : 1.0; // Sometimes type slower
     await element.sendKeys(chunk);
-    // Random delay between typing chunks (60-250ms)
-    await randomDelay(60, 250);
+    
+    // Variable delay between typing chunks - faster typists have shorter delays
+    const minDelay = typingStyle < 0.3 ? 100 : typingStyle < 0.7 ? 60 : 30;
+    const maxDelay = typingStyle < 0.3 ? 300 : typingStyle < 0.7 ? 200 : 150;
+    await randomDelay(minDelay * typingVariation, maxDelay * typingVariation);
+    
+    // Simulate typing error and correction (only in middle of text, not at the end)
+    if (makeTypingError && i < chunks.length - 2 && i > 0 && chunk.length > 0) {
+      // Make an error by typing a random character
+      const errorChar = String.fromCharCode(97 + Math.floor(Math.random() * 26)); // Random a-z
+      await element.sendKeys(errorChar);
+      await randomDelay(300, 700); // Pause to "notice" error
+      
+      // Delete the error using backspace
+      await element.sendKeys(Key.BACK_SPACE);
+      await randomDelay(200, 400); // Pause after correction
+    }
+  }
+  
+  // Sometimes add a pause at the end (human thinking before submitting)
+  if (Math.random() > 0.7) {
+    await randomDelay(500, 1200);
   }
 }
 
