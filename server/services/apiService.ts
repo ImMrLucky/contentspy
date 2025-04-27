@@ -376,7 +376,7 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
             const allParams = ['hl=en', 'gl=us', 'pws=0', 'nfpr=1', 'tbs=qdr:y', 'sourceid=chrome'];
             // Select a random subset of parameters
             const paramCount = Math.min(retryAttempt + 1 + Math.floor(Math.random() * 2), allParams.length);
-            const randomParams = [];
+            const randomParams: string[] = [];
             
             // Pick random params without repeating
             const paramIndices = new Set<number>();
@@ -518,7 +518,7 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
               randomIndices.add(Math.floor(Math.random() * allParams.length));
             }
             
-            const randomParams = Array.from(randomIndices).map(index => allParams[index]);
+            const randomParams: string[] = Array.from(randomIndices).map(index => allParams[index]);
             url += `&${randomParams.join('&')}`;
           }
           
@@ -1188,6 +1188,21 @@ export const processCompetitorContent = async (
   try {
     console.log(`Starting content analysis for ${domain}...`);
     
+    // Create a cache key that includes domain and keywords for content analysis
+    const cacheKey = `competitor_content_${domain}_${keywords || ''}`;
+    const cachedResults = getCachedResults(cacheKey);
+    
+    // Use cached results if available - this helps avoid rate limits entirely
+    if (cachedResults && cachedResults.length > 0) {
+      console.log(`Using ${cachedResults.length} cached competitor content results for ${domain}`);
+      
+      // Update the analysisId on each cached item since this might be a new analysis
+      return cachedResults.map((item: any) => ({
+        ...item, 
+        analysisId
+      }));
+    }
+    
     // Extract domain name and TLD for better searching
     const domainName = domain.replace(/^www\./i, '').split('.')[0].toLowerCase();
     const industryTerm = extractIndustryFromDomain(domain);
@@ -1229,16 +1244,17 @@ export const processCompetitorContent = async (
     // Array to store Google results
     let googleResults: any[] = [];
     
-    // Try each query with Google to gather results, but with early exit for better performance
+    // Try each query with Google to gather results, but with much more aggressive early exit for better performance
     // We'll aim to get enough results faster rather than trying for the full 200
-    let targetQueryCount = Math.min(searchQueries.length, 2); // Only try the first 2 queries by default
+    // Only try the first query by default to avoid rate limits - we can always try more if this returns nothing
+    let targetQueryCount = Math.min(searchQueries.length, 1); 
     
     for (let i = 0; i < targetQueryCount; i++) {
       const query = searchQueries[i];
       
-      // Early exit if we already have enough results
-      if (googleResults.length >= 50) {
-        console.log(`Already have ${googleResults.length} results, skipping remaining queries for performance`);
+      // Very early exit if we already have some usable results (much lower threshold)
+      if (googleResults.length >= 15) {
+        console.log(`Already have ${googleResults.length} results, which is sufficient - skipping remaining queries to avoid rate limits`);
         break;
       }
       
@@ -1695,6 +1711,14 @@ export const processCompetitorContent = async (
     if (!competitorContent || competitorContent.length === 0) {
       console.log("No competitor content found, returning empty array");
       return [];
+    }
+    
+    // Cache the results before returning (if there are any)
+    if (competitorContent.length > 0) {
+      // Create a cache key that includes domain and keywords
+      const cacheKey = `competitor_content_${domain}_${keywords || ''}`;
+      console.log(`Caching ${competitorContent.length} competitor content results for future use`);
+      cacheResults(cacheKey, competitorContent);
     }
     
     return competitorContent;
