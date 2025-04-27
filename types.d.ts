@@ -1,16 +1,17 @@
 declare module 'free-proxy' {
-  export interface ProxyOptions {
+  export interface ProxyListOptions {
+    ip?: string;
+    port?: string;
     country?: string;
-    https?: boolean;
-    anonymity?: number;
+    countryCode?: string;
   }
   
-  export default class FreeProxy {
-    constructor(options?: ProxyOptions);
+  export default class ProxyList {
+    constructor();
     
-    country: string;
-    protocol: string;
+    cached: any[];
     
+    fetchProxiesList(page: number): Promise<any>;
     get(limit?: number): Promise<string[]>;
     getRandom(): Promise<string>;
   }
