@@ -6,7 +6,14 @@ import axios from 'axios';
 import * as cheerio from 'cheerio';
 import natural from 'natural';
 import { HttpProxyAgent } from 'http-proxy-agent';
-import { scrapeGoogleWithHeadlessBrowser } from './headlessBrowser';
+import { 
+  scrapeGoogleWithHeadlessBrowser, 
+  getSimilarWebsitesWithHeadlessBrowser 
+} from './headlessBrowser';
+import {
+  scrapeGoogleWithHttp,
+  getSimilarWebsitesWithHttp
+} from './httpScraper';
 // Import default export from free-proxy
 import ProxyList from 'free-proxy';
 
@@ -487,8 +494,7 @@ export const extractDomain = (url: string): string => {
 export const getSimilarWebsites = async (domain: string): Promise<string[]> => {
   try {
     try {
-      // First attempt with Puppeteer
-      const { getSimilarWebsitesWithHeadlessBrowser } = require('./headlessBrowser');
+      // First attempt with the imported headless browser function
       const results = await getSimilarWebsitesWithHeadlessBrowser(domain);
       if (results && results.length > 0) {
         return results;
@@ -498,8 +504,7 @@ export const getSimilarWebsites = async (domain: string): Promise<string[]> => {
       console.log(`Falling back to HTTP scraping for similar websites...`);
     }
     
-    // Fallback to HTTP scraper if Puppeteer fails
-    const { getSimilarWebsitesWithHttp } = require('./httpScraper');
+    // Fallback to HTTP scraper if headless browser fails (imported at the top)
     return await getSimilarWebsitesWithHttp(domain);
   } catch (error) {
     console.error(`Error getting similar websites: ${error}`);
@@ -615,8 +620,7 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
     console.log(`No cached results found. Using headlessBrowser module for Google scraping...`);
     
     try {
-      // First try using the headless browser
-      const { scrapeGoogleWithHeadlessBrowser } = require('./headlessBrowser');
+      // First try using the headless browser (import already at the top of the file)
       const results = await scrapeGoogleWithHeadlessBrowser(query, limit);
       
       // Cache results if we found any
@@ -628,9 +632,9 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
       console.error(`Error in headless browser Google scraping: ${puppeteerError}`);
       console.log(`Falling back to HTTP scraping method...`);
       
-      // If Puppeteer fails, try using the HTTP scraper fallback
+      // If the headless browser fails, try using HTTP scraper
       try {
-        const { scrapeGoogleWithHttp } = require('./httpScraper');
+        // Using the imported function from httpScraper
         const httpResults = await scrapeGoogleWithHttp(query, limit);
         
         // Cache results if we found any
