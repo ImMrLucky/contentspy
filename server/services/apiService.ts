@@ -1196,6 +1196,9 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
     
     console.log(`Scraped ${allResults.length} Google results for "${query}" after ${totalPages} page attempts`);
     
+    // Even if we couldn't get results with this circuit breaker pass, we'll try again with 
+    // different parameters next time. Don't use any fallback data.
+    
     // Cache the results if we found anything useful
     if (allResults.length > 0) {
       cacheResults(cacheKey, allResults);
