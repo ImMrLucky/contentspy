@@ -660,7 +660,9 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
       return cachedResults;
     }
     
-    // Circuit breaker pattern variables already defined, we'll use those
+    // Apply an initial delay to mimic more human-like behavior
+    // This helps avoid immediate detection as automated traffic
+    await randomDelay(3000, 7000);
     
     // Initialize our proxy list if needed
     await ensureProxiesInitialized();
@@ -672,6 +674,9 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
     let circuitBreakerTripped = false;
     let consecutiveFailures = 0;
     const MAX_CONSECUTIVE_FAILURES = 5;
+    
+    // Track which methods work best
+    const methodSuccessCount = [0, 0, 0];
     
     // Try multiple Google scraping approaches - we'll rotate between them for reliability
     // We'll use 3 different methods now, plus fallbacks
@@ -1181,27 +1186,85 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
       }
     ];
     
-    // Try to get results using multiple methods and pages - with enhanced early exit optimizations
+    // Advanced adaptive strategy with intelligent method selection
     let methodIndex = 0;
     let totalPages = 0;
     let success = false;
+    let conservativeModeActive = false;
     
-
+    // Apply initial delay to appear more human-like
+    await randomDelay(4000, 7000);
     
     // More aggressive early exit conditions for faster results
     // Lower target for faster initial response, especially in rate-limited scenarios
-    const targetResultCount = Math.min(limit, 30); // Aim for just 30 results initially
+    const targetResultCount = Math.min(limit, 40); // Aim for ~40 results initially
     
     // Determine the number of methods for rotation
     const methodCount = scrapingMethods.length;
     
-    while (allResults.length < targetResultCount && totalPages < 9) { // Try up to 9 pages total (3 per method)
-      // Rotate between methods more effectively
-      const methodToUse = methodIndex % methodCount;
+    // Track which methods work best to adapt our strategy
+    const methodSuccesses = [0, 0, 0]; // Count of successful responses for each method
+    let bestMethod = -1; // Most successful method (-1 = no data yet)
+    
+    while (allResults.length < targetResultCount && totalPages < 9) { // Try up to 9 pages total
+      // Activate conservative mode if too many failures
+      if (consecutiveFailures >= 3 && !conservativeModeActive) {
+        console.log('⚠️ Circuit breaker tripped - switching to conservative mode');
+        circuitBreakerTripped = true;
+        conservativeModeActive = true;
+        console.log('Conservative mode active - using longer delays between requests');
+        
+        // If we have success data, switch to the best method
+        if (bestMethod >= 0) {
+          console.log(`Switching to best performing method (${bestMethod + 1})`);
+          methodIndex = bestMethod; // Force using best method
+        }
+        
+        // Add longer pause when switching to conservative mode
+        await randomDelay(8000, 12000);
+      }
+      
+      // Smart method selection based on success history
+      if (conservativeModeActive && bestMethod >= 0) {
+        // In conservative mode, always use best method
+        methodIndex = bestMethod;
+      } else if (totalPages >= 3) {
+        // After trying each method once, start favoring successful methods
+        // Find method with highest success rate
+        const maxSuccesses = Math.max(...methodSuccesses);
+        if (maxSuccesses > 0) {
+          bestMethod = methodSuccesses.indexOf(maxSuccesses);
+          // 75% chance to use best method, 25% chance to try others
+          if (Math.random() < 0.75) {
+            methodIndex = bestMethod;
+          } else {
+            // Choose randomly from other methods
+            const otherMethods = Array.from({length: methodCount}, (_, i) => i).filter(i => i !== bestMethod);
+            methodIndex = otherMethods[Math.floor(Math.random() * otherMethods.length)];
+          }
+        } else {
+          // No successes yet, continue round-robin
+          methodIndex = totalPages % methodCount;
+        }
+      } else {
+        // First few attempts: use simple round-robin
+        methodIndex = totalPages % methodCount;
+      }
+      
+      const methodToUse = methodIndex;
       const method = scrapingMethods[methodToUse];
       
-      // Each method gets its own sequence of page numbers
+      // Each method has its own sequence of page numbers
       const page = Math.floor(totalPages / methodCount);
+      
+      // Add variable delays between requests, longer in conservative mode
+      if (conservativeModeActive) {
+        const pauseDuration = 7000 + Math.floor(Math.random() * 5000) + (methodToUse * 1000);
+        await randomDelay(pauseDuration, pauseDuration + 3000);
+      } else {
+        const pauseDuration = 2000 + Math.floor(Math.random() * 3000) + (methodToUse * 500);
+        await randomDelay(pauseDuration, pauseDuration + 2000);
+      }
       
       console.log(`Trying scraping method ${methodToUse + 1}, page ${page + 1}`);
       
@@ -1209,6 +1272,8 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
         success = await method(page);
         
         if (success) {
+          // Update success metrics
+          methodSuccesses[methodToUse]++;
           // Reset consecutive failures counter on success
           consecutiveFailures = 0;
         } else {
