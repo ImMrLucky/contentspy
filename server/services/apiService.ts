@@ -529,151 +529,161 @@ export const findCompetitorDomains = async (domain: string, limit = 10, keywords
     // Get base domain for searching
     const baseDomain = extractDomain(domain);
     
-    // Determine the industry
-    const industry = extractIndustryFromDomain(baseDomain);
-    console.log(`Detected industry: ${industry} for domain: ${baseDomain}`);
-    
-    // Create industry-specific competitors map for reliable results
-    // This solves the Google CAPTCHA issue by having pre-defined reliable competitors
-    const industryCompetitorsMap: { [key: string]: string[] } = {
-      'boiler': [
-        'grainger.com',
-        'supplyhouse.com',
-        'boilersupplyco.com',
-        'weil-mclain.com',
-        'pexuniverse.com',
-        'ferguson.com',
-        'zoro.com',
-        'homedepot.com',
-        'lowes.com',
-        'supply.com',
-        'forwardthinking.com',
-        'boilerpartsupply.com'
-      ],
-      'plumbing': [
-        'plumbingsupply.com',
-        'supplyhouse.com',
-        'ferguson.com',
-        'plumbmaster.com',
-        'homedepot.com',
-        'lowes.com',
-        'build.com',
-        'amazon.com',
-        'menards.com',
-        'faucetdirect.com',
-        'plumbersstock.com',
-        'zoro.com'
-      ],
-      'hvac': [
-        'grainger.com',
-        'supplyhouse.com',
-        'johnstonesupply.com',
-        'ferguson.com',
-        'carrier.com',
-        'trane.com',
-        'lennox.com',
-        'york.com',
-        'acwholesalers.com',
-        'rheem.com',
-        'goodmanmfg.com',
-        'hvacpartsshop.com'
-      ],
-      'retail': [
-        'amazon.com',
-        'walmart.com',
-        'target.com',
-        'bestbuy.com',
-        'homedepot.com',
-        'lowes.com',
-        'wayfair.com',
-        'costco.com',
-        'ikea.com',
-        'macys.com',
-        'nordstrom.com',
-        'gap.com'
-      ]
-    };
-    
-    // Get industry-specific competitors
-    const industryCompetitors = industryCompetitorsMap[industry] || [];
-    
-    // If we have industry-specific competitors, return those
-    if (industryCompetitors.length > 0) {
-      console.log(`Using ${industryCompetitors.length} predefined competitors for industry: ${industry}`);
-      return industryCompetitors.slice(0, limit);
-    }
-    
-    // First try to find similar websites directly - these often have the most relevant content
-    const similarSites = await getSimilarWebsites(baseDomain);
-    
-    if (similarSites.length >= limit) {
-      console.log(`Found ${similarSites.length} similar websites for ${baseDomain}`);
-      return similarSites.slice(0, limit);
-    }
-    
-    // If we didn't get enough similar sites, search for related content with keywords
-    let allCompetitors = [...similarSites];
-    
-    // Construct search queries 
+    // Construct search queries based on the domain and keywords
     const searchQueries = [];
     
-    // If user provided keywords, use them to find more targeted competitors
+    // If user provided keywords, prioritize those
     if (keywords && keywords.trim().length > 0) {
       // Clean and split the keywords
       const keywordsList = keywords.split(',').map(k => k.trim());
       
-      // Combine domain info with each keyword for better results
+      // Combine domain with each keyword for targeted searches
       keywordsList.forEach(keyword => {
         if (keyword.length > 0) {
-          const industryKeyword = keyword.toLowerCase();
-          searchQueries.push(`${industryKeyword} competitors`);
-          searchQueries.push(`${industryKeyword} blogs`);
-          searchQueries.push(`best ${industryKeyword} sites`);
+          const cleanKeyword = keyword.toLowerCase();
+          searchQueries.push(`${baseDomain} ${cleanKeyword}`);
+          searchQueries.push(`${cleanKeyword} blogs`);
+          searchQueries.push(`${cleanKeyword} articles`);
         }
       });
     }
     
-    // Add some generic queries if we don't have enough
-    if (searchQueries.length < 3) {
-      searchQueries.push(`${baseDomain} competitors`);
-      searchQueries.push(`sites like ${baseDomain}`);
-      searchQueries.push(`${baseDomain} alternatives`);
-    }
+    // Add generic queries about the domain
+    searchQueries.push(`top ${baseDomain} competitors`);
+    searchQueries.push(`sites like ${baseDomain}`);
+    searchQueries.push(`${baseDomain} alternatives`);
+    searchQueries.push(`${baseDomain} industry blogs`);
     
-    // Use the search queries to find more competitor domains
+    // Track all competitors we find
+    const competitors = new Set<string>();
+    
+    // Use each search query to find potential competitors
     for (const query of searchQueries) {
-      // We only need to continue if we haven't reached the limit yet
-      if (allCompetitors.length >= limit) break;
+      if (competitors.size >= limit * 2) break; // Get more than we need and filter later
       
       try {
-        // Get search results for the query
-        const results = await getSearchResults(query, 20);
+        console.log(`Searching Google for: "${query}"`);
+        // Get search results for this query (get up to 200 as requested)
+        const results = await scrapeGoogleSearchResults(query, 200);
         
-        // Extract unique domains from search results
-        const domains = results.map(result => extractDomain(result.link))
-          // Filter out the domain we're analyzing
-          .filter(d => d !== baseDomain && !d.includes(baseDomain))
-          // Filter out duplicates
-          .filter(d => !allCompetitors.includes(d));
-        
-        // Add unique domains to competitor list (manual deduplication)
-        for (const domain of domains) {
-          if (!allCompetitors.includes(domain)) {
-            allCompetitors.push(domain);
-          }
+        if (results && results.length > 0) {
+          console.log(`Found ${results.length} results for query: "${query}"`);
+          
+          // Extract domains from search results
+          results.forEach(result => {
+            try {
+              if (result.link && typeof result.link === 'string') {
+                const resultDomain = extractDomain(result.link);
+                
+                // Don't include the domain we're analyzing
+                if (resultDomain !== baseDomain && 
+                    !resultDomain.includes(baseDomain) && 
+                    !baseDomain.includes(resultDomain)) {
+                  competitors.add(resultDomain);
+                }
+              }
+            } catch (error) {
+              // Skip invalid URLs
+            }
+          });
+        } else {
+          console.log(`No results found for query: "${query}"`);
         }
-        
-        console.log(`Found ${domains.length} new potential competitors from query: "${query}"`);
-        
-        // If we have enough competitors, we can stop
-        if (allCompetitors.length >= limit) break;
       } catch (error) {
-        console.error(`Error finding competitors with query "${query}": ${error}`);
+        console.error(`Error searching for "${query}": ${error}`);
       }
     }
     
-    console.log(`Found total of ${allCompetitors.length} competitors for ${baseDomain}`);
-    return allCompetitors.slice(0, limit);
+    console.log(`Found ${competitors.size} unique competitor domains from search queries`);
+    
+    // Convert to array and limit
+    const competitorArray = Array.from(competitors).slice(0, limit);
+    
+    // If we couldn't find any competitors via search, use direct domain search 
+    if (competitorArray.length === 0) {
+      // Attempt to search directly for content about the domain
+      try {
+        const directResults = await scrapeGoogleSearchResults(`about ${baseDomain}`, 100);
+        
+        if (directResults && directResults.length > 0) {
+          console.log(`Found ${directResults.length} direct results for domain`);
+          
+          // Add domains from direct search
+          directResults.forEach(result => {
+            try {
+              if (result.link && typeof result.link === 'string') {
+                const resultDomain = extractDomain(result.link);
+                if (resultDomain !== baseDomain) {
+                  competitors.add(resultDomain);
+                }
+              }
+            } catch (error) {
+              // Skip invalid URLs
+            }
+          });
+        }
+      } catch (error) {
+        console.error(`Error in direct domain search: ${error}`);
+      }
+    }
+    
+    // Convert competitors set to array and ensure we have the right number
+    let finalCompetitors = Array.from(competitors);
+    
+    // If we still don't have enough competitors, try a direct similar sites approach
+    if (finalCompetitors.length < limit) {
+      try {
+        console.log(`Looking for similar sites to supplement competitor list`);
+        const similarSites = await getSimilarWebsites(baseDomain);
+        
+        // Add new similar sites that aren't in our list yet
+        for (const site of similarSites) {
+          if (!finalCompetitors.includes(site) && site !== baseDomain) {
+            finalCompetitors.push(site);
+          }
+        }
+        
+        console.log(`Found ${similarSites.length} similar websites, added any new ones to our list`);
+      } catch (error) {
+        console.error(`Error finding similar websites: ${error}`);
+      }
+    }
+    
+    // If we still don't have enough competitors, use direct search
+    if (finalCompetitors.length < limit) {
+      try {
+        // Directly search for content related to the domain and keywords
+        let directQuery = baseDomain;
+        if (keywords && keywords.trim()) {
+          directQuery += ` ${keywords.split(',')[0].trim()}`;
+        }
+        
+        console.log(`Direct search for more competitors: "${directQuery} blogs"`);
+        const results = await scrapeGoogleSearchResults(`${directQuery} blogs`, 100);
+        
+        if (results && results.length > 0) {
+          // Extract domains from results
+          results.forEach(result => {
+            try {
+              if (result.link && typeof result.link === 'string') {
+                const resultDomain = extractDomain(result.link);
+                // Only add new domains that aren't the base domain
+                if (resultDomain !== baseDomain && !finalCompetitors.includes(resultDomain)) {
+                  finalCompetitors.push(resultDomain);
+                }
+              }
+            } catch (error) {
+              // Skip invalid URLs
+            }
+          });
+        }
+      } catch (error) {
+        console.error(`Error in direct content search: ${error}`);
+      }
+    }
+    
+    console.log(`Found total of ${finalCompetitors.length} competitors for ${baseDomain}`);
+    return finalCompetitors.slice(0, limit);
   } catch (error) {
     console.error(`Error finding competitor domains: ${error}`);
     return [];
@@ -1056,6 +1066,7 @@ const industryContentTemplates: {[key: string]: {title: string, description: str
   ]
 };
 
+// Process content from competitor domains using real-time Google scraping
 export const processCompetitorContent = async (
   domain: string,
   competitorDomains: string[],
@@ -1065,217 +1076,143 @@ export const processCompetitorContent = async (
     console.log(`Processing content for ${competitorDomains.length} competitors of ${domain}`);
     const results: any[] = [];
     
-    // Get the industry for the domain
-    const industry = extractIndustryFromDomain(domain);
-    console.log(`Using content templates for industry: ${industry}`);
-    
-    // Get content templates for the industry
-    const contentTemplates = industryContentTemplates[industry] || [];
-    
-    // If we have content templates, generate high-quality content for each competitor
-    if (contentTemplates.length > 0 && competitorDomains.length > 0) {
-      console.log(`Using ${contentTemplates.length} content templates for ${competitorDomains.length} competitors`);
-      
-      // Distribute templates among competitors
-      let templateIndex = 0;
-      let position = 1;
-      
-      for (const competitorDomain of competitorDomains) {
-        // Use multiple templates per competitor (2-3 templates each)
-        const templatesPerCompetitor = Math.min(3, Math.ceil(contentTemplates.length / competitorDomains.length));
-        
-        for (let i = 0; i < templatesPerCompetitor; i++) {
-          const template = contentTemplates[templateIndex % contentTemplates.length];
-          templateIndex++;
-          
-          // Generate traffic score based on position
-          const trafficScore = Math.max(10, 30 - position);
-          position++;
-          
-          // Determine traffic level
-          let trafficLevel = 'low';
-          if (trafficScore >= 25) {
-            trafficLevel = 'high';
-          } else if (trafficScore >= 18) {
-            trafficLevel = 'medium';
-          }
-          
-          // Verified real URLs for each competitor domain
-          const realUrlMap: {[domain: string]: string} = {
-            'grainger.com': 'https://www.grainger.com/know-how/equipment-information/hvac-and-refrigeration/hvac-maintenance/boiler-maintenance',
-            'supplyhouse.com': 'https://www.supplyhouse.com/resources',
-            'boilersupplyco.com': 'https://www.buderus.us/products/',
-            'weil-mclain.com': 'https://www.weil-mclain.com/products',
-            'pexuniverse.com': 'https://pexuniverse.com/hydronic-heating',
-            'ferguson.com': 'https://www.ferguson.com/category/plumbing/water-heaters/_/N-zbq5ot',
-            'zoro.com': 'https://www.zoro.com/water-heaters/c/13171/',
-            'homedepot.com': 'https://www.homedepot.com/b/Plumbing-Water-Heaters/N-5yc1vZbqly',
-            'lowes.com': 'https://www.lowes.com/pl/Water-heaters-Plumbing/4294737328',
-            'supply.com': 'https://www.supply.com/water-heaters/c108044',
-            'forwardthinking.com': 'https://forwardthinking.honeywell.com/related/categories/heating-controls/boiler-controls/',
-            'boilerpartsupply.com': 'https://www.boilerpartsupply.com/'
-          };
-          
-          // Get a real URL for this domain, or create a fallback that might exist
-          let url = realUrlMap[competitorDomain];
-          
-          // If we don't have a real URL mapping, use the domain homepage
-          if (!url) {
-            url = `https://www.${competitorDomain}`;
-          }
-          
-          // Create content item with real URL
-          const contentItem = {
-            title: template.title,
-            url: url,
-            domain: competitorDomain,
-            description: template.description,
-            trafficLevel,
-            trafficScore,
-            source: 'google',
-            keywords: template.keywords
-          };
-          
-          // Add to results
-          results.push(contentItem);
-        }
-      }
-      
-      console.log(`Generated ${results.length} content items from templates`);
-      
-      // Sort by traffic score
-      return results.sort((a, b) => b.trafficScore - a.trafficScore);
+    // Parse keyword phrases if provided
+    let keywordsArray: string[] = [];
+    if (keywords && keywords.trim()) {
+      keywordsArray = keywords.split(',').map(k => k.trim()).filter(k => k.length > 0);
     }
     
-    // If no templates or traditional content processing
-    type ContentItem = { domain: string, result: any };
-    const contentQueue: ContentItem[] = [];
+    console.log(`Using ${keywordsArray.length} keyword phrases: ${keywordsArray.join(', ')}`);
     
-    // Prepare a queue of content to process
+    // Process each competitor domain to find article content
     for (const competitorDomain of competitorDomains) {
-      // Get search results from Google for this competitor
-      const searchResults = await getSearchResults(competitorDomain, 30);
+      console.log(`Finding article content for competitor: ${competitorDomain}`);
       
-      // Add each search result to the processing queue
-      searchResults.forEach(result => {
-        contentQueue.push({ domain: competitorDomain, result });
-      });
-    }
-    
-    console.log(`Found ${contentQueue.length} total content items to process`);
-    
-    // Process each content item in the queue
-    const processContentItem = async ({ domain: competitorDomain, result }: ContentItem): Promise<any> => {
-      try {
-        // Extract URL and title
-        const { link: url, title, snippet } = result;
+      // Create search queries focusing on article/blog content
+      const searchQueries = [
+        `site:${competitorDomain} article`,
+        `site:${competitorDomain} blog`,
+        `site:${competitorDomain} post`, 
+        `site:${competitorDomain} guide`
+      ];
+      
+      // Add keyword-specific searches if we have keywords
+      if (keywordsArray.length > 0) {
+        keywordsArray.forEach(keyword => {
+          searchQueries.push(`site:${competitorDomain} ${keyword} article`);
+          searchQueries.push(`site:${competitorDomain} ${keyword} blog`);
+        });
+      }
+      
+      // Get up to 5 results per competitor to avoid overwhelming the API
+      const MAX_RESULTS_PER_COMPETITOR = 5;
+      const competitorResults: any[] = [];
+      
+      // Try each search query until we have enough results
+      for (const query of searchQueries) {
+        // Skip if we already have enough results for this competitor
+        if (competitorResults.length >= MAX_RESULTS_PER_COMPETITOR) break;
         
-        // Only process if we have a valid URL and title
-        if (!url || !title) return null;
+        console.log(`Searching for articles with query: "${query}"`);
         
-        // Skip if it's the homepage (likely not an article)
-        const urlObj = new URL(url);
-        const path = urlObj.pathname;
-        if (path === '/' || path === '' || path === '/index.html') {
-          return null;
-        }
-        
-        // Skip if URL contains typical non-article paths
-        const nonArticlePaths = ['/contact', '/about', '/pricing', '/login', '/signup', '/register', '/cart', '/checkout', '/product', '/shop', '/store', '/category'];
-        if (nonArticlePaths.some(p => path.toLowerCase().includes(p))) {
-          return null;
-        }
-        
-        // Estimate traffic level based on domain and position
-        let trafficLevel = 'low';
-        let trafficScore = 10; // Base score
-        
-        // Bonus for position in search results (1-10)
-        const position = result.position || 0;
-        if (position > 0) {
-          trafficScore += Math.max(0, 11 - position); // Position 1 gets +10, position 10 gets +1
-        }
-        
-        // Bonus for being from Google (main search engine)
-        if (result.source === 'google') {
-          trafficScore += 5;
-        }
-        
-        // Set traffic level based on final score
-        if (trafficScore >= 20) {
-          trafficLevel = 'high';
-        } else if (trafficScore >= 15) {
-          trafficLevel = 'medium';
-        }
-        
-        // Extract keywords from title and snippet
-        let extractedKeywords = extractKeywords(title + ' ' + (snippet || ''), 8);
-        
-        // If user provided keywords, prioritize those that match
-        if (keywords && keywords.trim().length > 0) {
-          const userKeywords = keywords.split(',').map(k => k.trim().toLowerCase());
+        try {
+          // Scrape Google using the current query, limiting to 20 results to be efficient
+          const searchResults = await scrapeGoogleSearchResults(query, 20);
           
-          // Boost keywords that match user's input
-          extractedKeywords = extractedKeywords.sort((a, b) => {
-            const aMatch = userKeywords.some(uk => a.includes(uk) || uk.includes(a));
-            const bMatch = userKeywords.some(uk => b.includes(uk) || uk.includes(b));
+          if (searchResults && searchResults.length > 0) {
+            console.log(`Found ${searchResults.length} potential articles for query "${query}"`);
             
-            if (aMatch && !bMatch) return -1;
-            if (!aMatch && bMatch) return 1;
-            return 0;
-          });
+            // Process each search result
+            for (const result of searchResults) {
+              // Skip if we have enough results
+              if (competitorResults.length >= MAX_RESULTS_PER_COMPETITOR) break;
+              
+              try {
+                // Extract required information
+                const { link: url, title, snippet, position } = result;
+                
+                // Skip if missing required data
+                if (!url || !title) continue;
+                
+                // Skip if it's just a homepage (unlikely to be an article)
+                const urlObj = new URL(url);
+                const path = urlObj.pathname;
+                if (path === '/' || path === '' || path === '/index.html') {
+                  continue;
+                }
+                
+                // Skip if URL contains typical non-article paths
+                const nonArticlePaths = ['/contact', '/about', '/pricing', '/login', '/signup', 
+                                        '/register', '/cart', '/checkout', '/product', '/shop', 
+                                        '/store', '/category'];
+                if (nonArticlePaths.some(p => path.toLowerCase().includes(p))) {
+                  continue;
+                }
+                
+                // Calculate traffic score (higher position = more traffic)
+                let trafficScore = 10; // Base score
+                
+                if (position > 0) {
+                  // Position 1 gets +10 bonus, position 10 gets +1 bonus
+                  trafficScore += Math.max(0, 11 - position);
+                }
+                
+                // Determine traffic level based on score
+                let trafficLevel = 'low';
+                if (trafficScore >= 17) {
+                  trafficLevel = 'high';
+                } else if (trafficScore >= 13) {
+                  trafficLevel = 'medium';
+                }
+                
+                // Extract keywords from title and snippet
+                const extractedKeywords = extractKeywords(title + ' ' + (snippet || ''), 8);
+                
+                // Add to competitor results
+                competitorResults.push({
+                  title,
+                  url,
+                  domain: competitorDomain,
+                  description: snippet || '',
+                  trafficLevel,
+                  trafficScore,
+                  source: 'google',
+                  keywords: extractedKeywords
+                });
+              } catch (itemError) {
+                console.error(`Error processing search result: ${itemError}`);
+                // Continue to next result
+              }
+            }
+          } else {
+            console.log(`No results found for query: "${query}"`);
+          }
+        } catch (queryError) {
+          console.error(`Error searching with query "${query}": ${queryError}`);
+          // Continue to next query
         }
-        
-        // Return processed content item
-        return {
-          title,
-          url,
-          domain: competitorDomain,
-          description: snippet || '',
-          trafficLevel,
-          trafficScore,
-          source: result.source,
-          keywords: extractedKeywords
-        };
-      } catch (error) {
-        console.error(`Error processing content item: ${error}`);
-        return null;
       }
-    };
-    
-    // Process all content items in parallel (with limit)
-    const BATCH_SIZE = 10;
-    for (let i = 0; i < contentQueue.length; i += BATCH_SIZE) {
-      const batch = contentQueue.slice(i, i + BATCH_SIZE);
-      const batchResults = await Promise.all(batch.map(processContentItem));
       
-      // Filter out null results and add to results array
-      results.push(...batchResults.filter(Boolean));
+      console.log(`Found ${competitorResults.length} article results for ${competitorDomain}`);
       
-      console.log(`Processed batch ${i/BATCH_SIZE + 1}/${Math.ceil(contentQueue.length/BATCH_SIZE)}, got ${batchResults.filter(Boolean).length} valid items`);
-      
-      // Add a short delay between batches to avoid overwhelming resources
-      if (i + BATCH_SIZE < contentQueue.length) {
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
+      // Add this competitor's results to the main results array
+      results.push(...competitorResults);
     }
     
-    // Filter duplicate URLs and create a unique results array
+    // Filter out any duplicate URLs 
     const uniqueUrlsMap = new Map<string, number>();
-    const uniqueResults = [];
+    const uniqueResults: any[] = [];
     
-    // Use a for loop instead of filter + Set to avoid iteration issues
-    for (let i = 0; i < results.length; i++) {
-      const item = results[i];
+    for (const item of results) {
       if (!uniqueUrlsMap.has(item.url)) {
         uniqueUrlsMap.set(item.url, 1);
         uniqueResults.push(item);
       }
     }
     
-    console.log(`Found ${uniqueResults.length} unique content items after processing`);
+    console.log(`Found ${uniqueResults.length} unique articles after filtering duplicates`);
     
-    // Sort by traffic score (descending)
+    // Sort results by traffic score (highest first)
     return uniqueResults.sort((a, b) => b.trafficScore - a.trafficScore);
   } catch (error) {
     console.error(`Error processing competitor content: ${error}`);
