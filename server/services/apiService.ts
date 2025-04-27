@@ -514,7 +514,25 @@ export const getSimilarWebsites = async (domain: string): Promise<string[]> => {
     // Make proxies available globally for Python and other scrapers
     global.availableProxies = availableProxies;
     
-    // Try Python scraper first (requests-html + pyppeteer, most effective against CAPTCHA)
+    // Try CAPTCHA solver first (most effective for avoiding Google rate limiting)
+    try {
+      console.log(`Using CAPTCHA solver for similar websites to: ${domain}`);
+      // Dynamically require to avoid circular dependencies
+      const { getSimilarWebsitesWithCaptchaSolver } = require('./captchaSolver');
+      const captchaResults = await getSimilarWebsitesWithCaptchaSolver(domain);
+      
+      if (captchaResults && captchaResults.length > 0) {
+        console.log(`Found ${captchaResults.length} similar websites using CAPTCHA solver`);
+        return captchaResults;
+      } else {
+        console.log(`CAPTCHA solver found 0 similar websites for ${domain}, trying Python scraper...`);
+      }
+    } catch (captchaError) {
+      console.error(`Error in CAPTCHA solver for similar websites: ${captchaError}`);
+      console.log(`Falling back to Python scraper for similar websites...`);
+    }
+    
+    // Try Python scraper second (requests-html + pyppeteer, also effective against CAPTCHA)
     try {
       console.log(`Using Python scraper with requests-html for similar websites to: ${domain}`);
       const pythonResults = await getSimilarWebsitesWithPython(domain);
@@ -774,7 +792,27 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
     // Make proxies available globally for Python and other scrapers
     global.availableProxies = availableProxies;
     
-    // Try Python-based scraper first (requests-html + pyppeteer, most effective against CAPTCHA)
+    // Try CAPTCHA solver first (puppeteer-extra with stealth and recaptcha plugins)
+    try {
+      console.log(`Trying CAPTCHA solver for Google search: "${query}"`);
+      // Dynamically require to avoid circular dependencies
+      const { scrapeGoogleWithCaptchaSolver } = require('./captchaSolver');
+      const captchaResults = await scrapeGoogleWithCaptchaSolver(query, limit);
+      
+      // Cache results if we found any
+      if (captchaResults && captchaResults.length > 0) {
+        console.log(`CAPTCHA solver succeeded with ${captchaResults.length} results`);
+        cacheResults(cacheKey, captchaResults);
+        return captchaResults;
+      } else {
+        console.log(`CAPTCHA solver returned 0 results, trying Python scraper fallback...`);
+      }
+    } catch (captchaError) {
+      console.error(`Error in CAPTCHA solver: ${captchaError}`);
+      console.log(`Falling back to Python scraper method...`);
+    }
+    
+    // Try Python-based scraper second (requests-html + pyppeteer, also effective against CAPTCHA)
     try {
       console.log(`Trying Python scraper with requests-html and pyppeteer: "${query}"`);
       const pythonResults = await scrapeGoogleWithPython(query, limit);

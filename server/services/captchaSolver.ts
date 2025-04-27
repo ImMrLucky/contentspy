@@ -14,6 +14,16 @@ import RecaptchaPlugin from 'puppeteer-extra-plugin-recaptcha';
 import { Browser, Page } from 'puppeteer';
 import { getRandomUserAgent } from './apiService';
 
+// Extend the Page interface to include the solveRecaptchas method
+declare module 'puppeteer' {
+  interface Page {
+    solveRecaptchas(): Promise<{ solved: boolean; error?: any }>;
+  }
+}
+
+// Helper function for waiting/delaying - replacement for waitForTimeout
+const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
+
 // Apply plugins
 puppeteer.use(StealthPlugin());
 
