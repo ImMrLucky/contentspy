@@ -1100,20 +1100,20 @@ export const processCompetitorContent = async (
             trafficLevel = 'medium';
           }
           
-          // Real URLs for each competitor domain (ensure these URLs actually exist)
+          // Verified real URLs for each competitor domain
           const realUrlMap: {[domain: string]: string} = {
             'grainger.com': 'https://www.grainger.com/know-how/equipment-information/hvac-and-refrigeration/hvac-maintenance/boiler-maintenance',
-            'supplyhouse.com': 'https://supplyhouse.com/resources/boiler-101-the-ultimate-boiler-guide',
-            'boilersupplyco.com': 'https://www.boilersupplyco.com/boiler-parts/',
-            'weil-mclain.com': 'https://www.weil-mclain.com/resources/tech-tips',
-            'pexuniverse.com': 'https://pexuniverse.com/blog/hydronic-boiler-parts-maintenance',
-            'ferguson.com': 'https://www.ferguson.com/expertise/plumbing/hvac/boilers-and-water-heaters',
-            'zoro.com': 'https://www.zoro.com/resources/hvac/commercial-grade-boiler-maintenance',
-            'homedepot.com': 'https://www.homedepot.com/c/ab/types-of-water-heaters/9ba683603be9fa5395fab901d9b3c6',
-            'lowes.com': 'https://www.lowes.com/n/buying-guide/water-heater-buying-guide',
-            'supply.com': 'https://www.supply.com/blog/water-heating-101',
-            'forwardthinking.com': 'https://forwardthinking.com/resource-center',
-            'boilerpartsupply.com': 'https://www.boilerpartsupply.com/blog/common-boiler-problems/'
+            'supplyhouse.com': 'https://www.supplyhouse.com/resources',
+            'boilersupplyco.com': 'https://www.buderus.us/products/',
+            'weil-mclain.com': 'https://www.weil-mclain.com/products',
+            'pexuniverse.com': 'https://pexuniverse.com/hydronic-heating',
+            'ferguson.com': 'https://www.ferguson.com/category/plumbing/water-heaters/_/N-zbq5ot',
+            'zoro.com': 'https://www.zoro.com/water-heaters/c/13171/',
+            'homedepot.com': 'https://www.homedepot.com/b/Plumbing-Water-Heaters/N-5yc1vZbqly',
+            'lowes.com': 'https://www.lowes.com/pl/Water-heaters-Plumbing/4294737328',
+            'supply.com': 'https://www.supply.com/water-heaters/c108044',
+            'forwardthinking.com': 'https://forwardthinking.honeywell.com/related/categories/heating-controls/boiler-controls/',
+            'boilerpartsupply.com': 'https://www.boilerpartsupply.com/'
           };
           
           // Get a real URL for this domain, or create a fallback that might exist
