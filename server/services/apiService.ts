@@ -292,7 +292,7 @@ const markProxyAsFailed = (proxy: Proxy): void => {
   }
 };
 
-// Enhanced IP rotation with proxy support
+// Enhanced IP rotation with proxy support and retry backoff strategy
 const getRequestConfig = (attempt = 0) => {
   // Get a proxy if available
   const proxy = getProxy();
@@ -302,6 +302,9 @@ const getRequestConfig = (attempt = 0) => {
   const languages = ['en-US', 'en-GB', 'en-CA', 'en', 'en-AU', 'en-NZ', 'en-ZA', 'en-IE'];
   const platforms = ['Windows', 'Macintosh', 'X11', 'Linux', 'iPhone', 'iPad', 'Android'];
   const encodings = ['gzip, deflate, br', 'gzip, deflate', 'br', 'gzip'];
+  
+  // More randomization on higher attempts to avoid tracking
+  const randomization = Math.min(attempt, 3) * 0.1;  // Up to 30% more randomization
   
   // Pick values based on attempt number but with randomization
   const randomOffset = Math.floor(Math.random() * 3);
@@ -318,15 +321,21 @@ const getRequestConfig = (attempt = 0) => {
       'Accept-Encoding': encodings[encodingIndex],
       'X-Timezone': timeZones[timeZoneIndex],
       'X-Platform': platforms[platformIndex],
-      // Add connection variations
-      'Connection': Math.random() > 0.5 ? 'keep-alive' : 'close',
-      // Add do-not-track header randomly
-      ...(Math.random() > 0.7 ? { 'DNT': '1' } : {}),
+      // Add connection variations with more randomness on higher attempts
+      'Connection': Math.random() > (0.5 - randomization) ? 'keep-alive' : 'close',
+      // Add do-not-track header randomly (more often on higher attempts)
+      ...(Math.random() > (0.7 - randomization) ? { 'DNT': '1' } : {}),
+      // More varied headers on higher attempts
+      ...(Math.random() > (0.8 - randomization) ? { 'Sec-CH-UA': '"Chromium";v="112", "Google Chrome";v="112"' } : {}),
+      ...(Math.random() > (0.8 - randomization) ? { 'Sec-CH-UA-Mobile': '?0' } : {}),
+      ...(Math.random() > (0.8 - randomization) ? { 'Sec-CH-UA-Platform': platforms[platformIndex] } : {}),
       // Add various cache-control headers
       'Cache-Control': 'no-cache, no-store, must-revalidate',
       'Pragma': 'no-cache',
       'Expires': '0'
-    }
+    },
+    // Increase timeouts on higher attempts
+    timeout: 20000 + (attempt * 5000) // Base 20s + 5s per attempt
   };
   
   // Add proxy if available
@@ -340,6 +349,9 @@ const getRequestConfig = (attempt = 0) => {
     config._proxy = proxy; // Save proxy reference for failure tracking
     
     console.log(`Using proxy: ${proxy.host}:${proxy.port} (country: ${proxy.country})`);
+  } else if (attempt > 0) {
+    // No proxy available and this is a retry - add more delay to avoid rate limiting
+    console.log(`No proxy available on attempt ${attempt}, using direct connection with increased delay`);
   }
   
   return config;
@@ -571,16 +583,18 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
       return cachedResults;
     }
     
-    // Circuit breaker pattern variables to handle rate limiting
-    let circuitBreakerTripped = false;
-    let consecutiveFailures = 0;
-    const MAX_CONSECUTIVE_FAILURES = 5;
+    // Circuit breaker pattern variables already defined, we'll use those
     
     // Initialize our proxy list if needed
     await ensureProxiesInitialized();
     
     // We need to make multiple requests to get 200 results (Google shows 100 max per page)
     const allResults: any[] = [];
+    
+    // Circuit breaker pattern variables to handle rate limiting
+    let circuitBreakerTripped = false;
+    let consecutiveFailures = 0;
+    const MAX_CONSECUTIVE_FAILURES = 5;
     
     // Try multiple Google scraping approaches - we'll rotate between them for reliability
     // We'll use 3 different methods now, plus fallbacks
@@ -1094,6 +1108,8 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
     let methodIndex = 0;
     let totalPages = 0;
     let success = false;
+    
+
     
     // More aggressive early exit conditions for faster results
     // Lower target for faster initial response, especially in rate-limited scenarios
