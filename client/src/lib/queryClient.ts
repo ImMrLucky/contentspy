@@ -7,12 +7,29 @@ async function throwIfResNotOk(res: Response) {
   }
 }
 
+// Helper to convert API paths to Netlify Functions paths when deployed
+function getApiUrl(url: string): string {
+  // Check if we're running on Netlify (production)
+  const isNetlify = window.location.hostname.includes('.netlify.app') || 
+                     window.location.hostname.includes('.netlify.com');
+  
+  // If we're on Netlify and the URL starts with /api, convert to /.netlify/functions/api
+  if (isNetlify && url.startsWith('/api')) {
+    return url.replace('/api', '/.netlify/functions/api');
+  }
+  
+  return url;
+}
+
 export async function apiRequest(
   method: string,
   url: string,
   data?: unknown | undefined,
 ): Promise<Response> {
-  const res = await fetch(url, {
+  // Convert API path if needed
+  const apiUrl = getApiUrl(url);
+  
+  const res = await fetch(apiUrl, {
     method,
     headers: data ? { "Content-Type": "application/json" } : {},
     body: data ? JSON.stringify(data) : undefined,
@@ -29,7 +46,10 @@ export const getQueryFn: <T>(options: {
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
-    const res = await fetch(queryKey[0] as string, {
+    // Convert API path if needed
+    const apiUrl = getApiUrl(queryKey[0] as string);
+    
+    const res = await fetch(apiUrl, {
       credentials: "include",
     });
 
