@@ -1077,126 +1077,131 @@ export const processCompetitorContent = async (
     const results: any[] = [];
     
     // Parse keyword phrases if provided
-    let keywordsArray: string[] = [];
+    const keywordsArray: string[] = [];
     if (keywords && keywords.trim()) {
-      keywordsArray = keywords.split(',').map(k => k.trim()).filter(k => k.length > 0);
+      keywordsArray.push(...keywords.split(',').map(k => k.trim()).filter(k => k.length > 0));
     }
     
     console.log(`Using ${keywordsArray.length} keyword phrases: ${keywordsArray.join(', ')}`);
     
     // Process each competitor domain to find article content
     for (const competitorDomain of competitorDomains) {
-      console.log(`Finding article content for competitor: ${competitorDomain}`);
-      
-      // Create search queries focusing on article/blog content
-      const searchQueries = [
-        `site:${competitorDomain} article`,
-        `site:${competitorDomain} blog`,
-        `site:${competitorDomain} post`, 
-        `site:${competitorDomain} guide`
-      ];
-      
-      // Add keyword-specific searches if we have keywords
-      if (keywordsArray.length > 0) {
-        keywordsArray.forEach(keyword => {
-          searchQueries.push(`site:${competitorDomain} ${keyword} article`);
-          searchQueries.push(`site:${competitorDomain} ${keyword} blog`);
-        });
-      }
-      
-      // Get up to 5 results per competitor to avoid overwhelming the API
-      const MAX_RESULTS_PER_COMPETITOR = 5;
-      const competitorResults: any[] = [];
-      
-      // Try each search query until we have enough results
-      for (const query of searchQueries) {
-        // Skip if we already have enough results for this competitor
-        if (competitorResults.length >= MAX_RESULTS_PER_COMPETITOR) break;
+      try {
+        console.log(`Finding article content for competitor: ${competitorDomain}`);
         
-        console.log(`Searching for articles with query: "${query}"`);
+        // Create search queries focusing on article/blog content
+        const searchQueries = [
+          `site:${competitorDomain} article`,
+          `site:${competitorDomain} blog`,
+          `site:${competitorDomain} post`, 
+          `site:${competitorDomain} guide`
+        ];
         
-        try {
-          // Scrape Google using the current query, limiting to 20 results to be efficient
-          const searchResults = await scrapeGoogleSearchResults(query, 20);
-          
-          if (searchResults && searchResults.length > 0) {
-            console.log(`Found ${searchResults.length} potential articles for query "${query}"`);
-            
-            // Process each search result
-            for (const result of searchResults) {
-              // Skip if we have enough results
-              if (competitorResults.length >= MAX_RESULTS_PER_COMPETITOR) break;
-              
-              try {
-                // Extract required information
-                const { link: url, title, snippet, position } = result;
-                
-                // Skip if missing required data
-                if (!url || !title) continue;
-                
-                // Skip if it's just a homepage (unlikely to be an article)
-                const urlObj = new URL(url);
-                const path = urlObj.pathname;
-                if (path === '/' || path === '' || path === '/index.html') {
-                  continue;
-                }
-                
-                // Skip if URL contains typical non-article paths
-                const nonArticlePaths = ['/contact', '/about', '/pricing', '/login', '/signup', 
-                                        '/register', '/cart', '/checkout', '/product', '/shop', 
-                                        '/store', '/category'];
-                if (nonArticlePaths.some(p => path.toLowerCase().includes(p))) {
-                  continue;
-                }
-                
-                // Calculate traffic score (higher position = more traffic)
-                let trafficScore = 10; // Base score
-                
-                if (position > 0) {
-                  // Position 1 gets +10 bonus, position 10 gets +1 bonus
-                  trafficScore += Math.max(0, 11 - position);
-                }
-                
-                // Determine traffic level based on score
-                let trafficLevel = 'low';
-                if (trafficScore >= 17) {
-                  trafficLevel = 'high';
-                } else if (trafficScore >= 13) {
-                  trafficLevel = 'medium';
-                }
-                
-                // Extract keywords from title and snippet
-                const extractedKeywords = extractKeywords(title + ' ' + (snippet || ''), 8);
-                
-                // Add to competitor results
-                competitorResults.push({
-                  title,
-                  url,
-                  domain: competitorDomain,
-                  description: snippet || '',
-                  trafficLevel,
-                  trafficScore,
-                  source: 'google',
-                  keywords: extractedKeywords
-                });
-              } catch (itemError) {
-                console.error(`Error processing search result: ${itemError}`);
-                // Continue to next result
-              }
-            }
-          } else {
-            console.log(`No results found for query: "${query}"`);
-          }
-        } catch (queryError) {
-          console.error(`Error searching with query "${query}": ${queryError}`);
-          // Continue to next query
+        // Add keyword-specific searches if we have keywords
+        if (keywordsArray.length > 0) {
+          keywordsArray.forEach(keyword => {
+            searchQueries.push(`site:${competitorDomain} ${keyword} article`);
+            searchQueries.push(`site:${competitorDomain} ${keyword} blog`);
+          });
         }
+        
+        // Get up to 5 results per competitor to avoid overwhelming the API
+        const MAX_RESULTS_PER_COMPETITOR = 5;
+        const competitorResults: any[] = [];
+        
+        // Try each search query until we have enough results
+        for (const query of searchQueries) {
+          // Skip if we already have enough results for this competitor
+          if (competitorResults.length >= MAX_RESULTS_PER_COMPETITOR) break;
+          
+          console.log(`Searching for articles with query: "${query}"`);
+          
+          try {
+            // Scrape Google using the current query, limiting to 20 results to be efficient
+            const searchResults = await scrapeGoogleSearchResults(query, 20);
+            
+            if (searchResults && searchResults.length > 0) {
+              console.log(`Found ${searchResults.length} potential articles for query "${query}"`);
+              
+              // Process each search result
+              for (const result of searchResults) {
+                try {
+                  // Skip if we have enough results
+                  if (competitorResults.length >= MAX_RESULTS_PER_COMPETITOR) break;
+                  
+                  // Extract required information
+                  const { link: url, title, snippet, position } = result;
+                  
+                  // Skip if missing required data
+                  if (!url || !title) continue;
+                  
+                  // Skip if it's just a homepage (unlikely to be an article)
+                  const urlObj = new URL(url);
+                  const path = urlObj.pathname;
+                  if (path === '/' || path === '' || path === '/index.html') {
+                    continue;
+                  }
+                  
+                  // Skip if URL contains typical non-article paths
+                  const nonArticlePaths = ['/contact', '/about', '/pricing', '/login', '/signup', 
+                                          '/register', '/cart', '/checkout', '/product', '/shop', 
+                                          '/store', '/category'];
+                  if (nonArticlePaths.some(p => path.toLowerCase().includes(p))) {
+                    continue;
+                  }
+                  
+                  // Calculate traffic score (higher position = more traffic)
+                  let trafficScore = 10; // Base score
+                  
+                  if (position > 0) {
+                    // Position 1 gets +10 bonus, position 10 gets +1 bonus
+                    trafficScore += Math.max(0, 11 - position);
+                  }
+                  
+                  // Determine traffic level based on score
+                  let trafficLevel = 'low';
+                  if (trafficScore >= 17) {
+                    trafficLevel = 'high';
+                  } else if (trafficScore >= 13) {
+                    trafficLevel = 'medium';
+                  }
+                  
+                  // Extract keywords from title and snippet
+                  const extractedKeywords = extractKeywords(title + ' ' + (snippet || ''), 8);
+                  
+                  // Add to competitor results
+                  competitorResults.push({
+                    title,
+                    url,
+                    domain: competitorDomain,
+                    description: snippet || '',
+                    trafficLevel,
+                    trafficScore,
+                    source: 'google',
+                    keywords: extractedKeywords
+                  });
+                } catch (itemError) {
+                  console.error(`Error processing search result: ${itemError}`);
+                  // Continue to next result
+                }
+              }
+            } else {
+              console.log(`No results found for query: "${query}"`);
+            }
+          } catch (queryError) {
+            console.error(`Error searching with query "${query}": ${queryError}`);
+            // Continue to next query
+          }
+        }
+        
+        console.log(`Found ${competitorResults.length} article results for ${competitorDomain}`);
+        
+        // Add this competitor's results to the main results array
+        results.push(...competitorResults);
+      } catch (competitorError) {
+        console.error(`Error processing competitor ${competitorDomain}: ${competitorError}`);
+        // Continue to next competitor
       }
-      
-      console.log(`Found ${competitorResults.length} article results for ${competitorDomain}`);
-      
-      // Add this competitor's results to the main results array
-      results.push(...competitorResults);
     }
     
     // Filter out any duplicate URLs 
