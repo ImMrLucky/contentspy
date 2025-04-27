@@ -64,25 +64,31 @@ export default function ExportWizard({ results }: ExportWizardProps) {
             <div className="mb-4">
               <h5 className="text-sm font-medium text-slate-700 mb-2">Key Insights:</h5>
               <ul className="text-sm space-y-1">
-                <li>• Top Content Type: <span className="font-medium">{results.insights.topContentType}</span></li>
-                <li>• Average Content Length: <span className="font-medium">{results.insights.avgContentLength}</span></li>
-                <li>• Key Competitors: <span className="font-medium">{results.insights.keyCompetitors}</span></li>
-                <li>• Content Gap Score: <span className="font-medium">{results.insights.contentGapScore}</span></li>
+                <li>• Top Content Type: <span className="font-medium">{results.insights?.topContentType || 'N/A'}</span></li>
+                <li>• Average Content Length: <span className="font-medium">{results.insights?.avgContentLength || 'N/A'}</span></li>
+                <li>• Key Competitors: <span className="font-medium">{results.insights?.keyCompetitors || 'N/A'}</span></li>
+                <li>• Content Gap Score: <span className="font-medium">{results.insights?.contentGapScore || 'N/A'}</span></li>
               </ul>
             </div>
             
             <div className="mb-4">
               <h5 className="text-sm font-medium text-slate-700 mb-2">Keyword Clusters:</h5>
               <div className="flex flex-wrap gap-2">
-                {results.insights.keywordClusters.slice(0, 4).map((cluster, idx) => (
-                  <Badge key={idx} variant="outline" className="bg-white">
-                    {cluster.name} ({cluster.count})
-                  </Badge>
-                ))}
-                {results.insights.keywordClusters.length > 4 && (
-                  <Badge variant="outline" className="bg-white">
-                    +{results.insights.keywordClusters.length - 4} more
-                  </Badge>
+                {results.insights?.keywordClusters && results.insights.keywordClusters.length > 0 ? (
+                  <>
+                    {results.insights.keywordClusters.slice(0, 4).map((cluster, idx) => (
+                      <Badge key={idx} variant="outline" className="bg-white">
+                        {cluster.name} ({cluster.count})
+                      </Badge>
+                    ))}
+                    {results.insights.keywordClusters.length > 4 && (
+                      <Badge variant="outline" className="bg-white">
+                        +{results.insights.keywordClusters.length - 4} more
+                      </Badge>
+                    )}
+                  </>
+                ) : (
+                  <Badge variant="outline" className="bg-white">No keyword clusters found</Badge>
                 )}
               </div>
             </div>
@@ -90,9 +96,9 @@ export default function ExportWizard({ results }: ExportWizardProps) {
             <div className="mb-4">
               <h5 className="text-sm font-medium text-slate-700 mb-2">Report Includes:</h5>
               <ul className="text-sm space-y-1">
-                <li>• All {results.competitorContent.length} competitor articles with full details</li>
+                <li>• All {results.competitorContent?.length || 0} competitor articles with full details</li>
                 <li>• Complete keyword analysis and traffic metrics</li>
-                <li>• {results.recommendations.length} content strategy recommendations</li>
+                <li>• {results.recommendations?.length || 0} content strategy recommendations</li>
                 <li>• Content gap analysis and competitor insights</li>
               </ul>
             </div>

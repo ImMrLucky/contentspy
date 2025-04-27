@@ -8,12 +8,33 @@ interface InsightsSummaryProps {
 }
 
 export default function InsightsSummary({ insights }: InsightsSummaryProps) {
+  if (!insights) {
+    return (
+      <Card className="w-full">
+        <CardHeader>
+          <div className="flex items-center space-x-2">
+            <TrendingUp className="h-5 w-5 text-primary" />
+            <CardTitle>Content Insights</CardTitle>
+          </div>
+          <CardDescription>
+            Analysis in progress...
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="py-6 text-center text-muted-foreground">
+            Loading insights data...
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   const {
-    topContentType,
-    avgContentLength,
-    keyCompetitors,
-    contentGapScore,
-    keywordClusters
+    topContentType = 'N/A',
+    avgContentLength = 'N/A',
+    keyCompetitors = 'N/A',
+    contentGapScore = '0',
+    keywordClusters = []
   } = insights;
 
   return (
