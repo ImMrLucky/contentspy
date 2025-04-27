@@ -16,6 +16,12 @@ import {
   cleanupPuppeteerResources
 } from "./services/puppeteerScraper";
 
+import {
+  scrapeGoogle,
+  getDomainContent,
+  findSimilarDomains 
+} from "./services/enhancedScraper";
+
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
   
@@ -90,26 +96,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Parse keywords
           const keywordArray = keywords ? keywords.split(',').map(k => k.trim()).filter(k => k) : [];
           
-          // Find competitor domains using puppeteer scraping (more reliable)
+          // First try puppeteer scraping, then fall back to HTTP-based scraping
           console.log(`Finding competitor domains for ${domain}`);
           let competitorDomains: string[];
+          
           try {
-            competitorDomains = await findSimilarDomainsWithPuppeteer(domain, keywordArray, 5);
-            console.log(`Found ${competitorDomains.length} competitor domains from puppeteer scraping`);
+            // Try puppeteer first
+            try {
+              competitorDomains = await findSimilarDomainsWithPuppeteer(domain, keywordArray, 5);
+              console.log(`Found ${competitorDomains.length} competitor domains from puppeteer scraping`);
+            } catch (error) {
+              // Fall back to HTTP-based scraping
+              console.log("Puppeteer scraping failed, falling back to HTTP scraping");
+              competitorDomains = await findSimilarDomains(domain, keywordArray, 5);
+              console.log(`Found ${competitorDomains.length} competitor domains from HTTP scraping`);
+            }
           } catch (error) {
             console.error("Error finding competitor domains:", error);
-            
-            // Fallback to industry-specific domains if scraping fails
-            console.log("Using fallback domains");
             competitorDomains = [];
           }
           
-          // If no competitor domains found, use industry-specific fallbacks
+          // If no competitor domains found, try one more time with generic approach
           if (!competitorDomains || competitorDomains.length === 0) {
-            // Try again with a more generic approach for finding competitors
+            console.log("No competitors found, trying generic search");
             try {
-              competitorDomains = await findSimilarDomainsWithPuppeteer(domain, [], 5);
-              console.log(`Found ${competitorDomains.length} competitor domains from generic puppeteer scraping`);
+              competitorDomains = await findSimilarDomains(domain, [], 5);
+              console.log(`Found ${competitorDomains.length} competitor domains from generic search`);
             } catch (error) {
               console.error("Error in generic competitor domain search:", error);
               competitorDomains = [];
@@ -120,11 +132,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.log(`Getting content from ${competitorDomains.length} competitor domains`);
           const competitorResults: any[] = [];
           
-          // Process each competitor domain
+          // Process each competitor domain using both methods
           for (const competitorDomain of competitorDomains) {
             try {
-              // Get up to 3 content items per competitor
-              const domainContent = await getDomainContentWithPuppeteer(competitorDomain, keywordArray, 3);
+              let domainContent;
+              
+              // Try puppeteer first, then fall back to HTTP scraping
+              try {
+                // Get up to 3 content items per competitor with puppeteer
+                domainContent = await getDomainContentWithPuppeteer(competitorDomain, keywordArray, 3);
+              } catch (error) {
+                console.log(`Puppeteer failed for ${competitorDomain}, using HTTP scraper`);
+                // Fall back to HTTP scraping
+                domainContent = await getDomainContent(competitorDomain, keywordArray, 3);
+              }
               
               if (domainContent && domainContent.length > 0) {
                 competitorResults.push(...domainContent);
@@ -138,7 +159,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (competitorResults.length === 0) {
             try {
               console.log(`No competitor content found, scraping content from ${domain} directly`);
-              const mainDomainContent = await getDomainContentWithPuppeteer(domain, keywordArray, 5);
+              let mainDomainContent;
+              
+              // Try puppeteer first, then fall back to HTTP scraping
+              try {
+                mainDomainContent = await getDomainContentWithPuppeteer(domain, keywordArray, 5);
+              } catch (error) {
+                console.log(`Puppeteer failed for ${domain}, using HTTP scraper`);
+                mainDomainContent = await getDomainContent(domain, keywordArray, 5);
+              }
               
               if (mainDomainContent && mainDomainContent.length > 0) {
                 competitorResults.push(...mainDomainContent);

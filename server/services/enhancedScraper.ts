@@ -3,6 +3,7 @@
  * 
  * This module provides advanced functionality for reliable Google scraping
  * using a combination of techniques to avoid detection and rate limiting.
+ * Optimized for serverless environments like Netlify Functions.
  */
 
 import axios from 'axios';
