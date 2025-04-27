@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.11"
 dependencies = [
+    "lxml-html-clean>=0.4.2",
+    "lxml[html-clean]>=5.4.0",
     "pyppeteer>=2.0.0",
     "requests-html>=0.10.0",
 ]
