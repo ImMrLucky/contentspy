@@ -2,7 +2,7 @@
 """
 Python-based Advanced Web Scraper for Google
 
-This module provides robust scraping capabilities using requests-html and pyppeteer
+This module provides robust scraping capabilities using requests-html
 to bypass CAPTCHA and scraping protection mechanisms.
 """
 
@@ -13,12 +13,17 @@ import sys
 import os
 from datetime import datetime
 from urllib.parse import urlparse, quote_plus
-from requests_html import HTMLSession, AsyncHTMLSession
-import asyncio
+
+# Try importing with error handling for better debugging
+try:
+    from requests_html import HTMLSession
+except ImportError as e:
+    print(f"Error importing requests_html: {e}")
+    # Provide fallback functionality or exit gracefully
+    HTMLSession = None
 
 # Global session to reuse
-session = HTMLSession()
-async_session = AsyncHTMLSession()
+session = HTMLSession() if HTMLSession else None
 
 # List of user agents to rotate through
 USER_AGENTS = [
@@ -29,12 +34,6 @@ USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Edge/118.0.2088.57",
     "Mozilla/5.0 (iPad; CPU OS 16_6_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
-]
-
-# Proxies to rotate through (can be expanded)
-PROXIES = [
-    # Format: {"http": "http://user:pass@host:port", "https": "https://user:pass@host:port"}
-    # Empty by default, can be populated programmatically
 ]
 
 # Google domains to rotate through
@@ -140,194 +139,15 @@ def generate_realistic_headers(user_agent=None):
         
     return headers
 
-async def scrape_google_with_pyppeteer(query, limit=200):
-    """
-    Scrape Google search results using pyppeteer (Puppeteer Python port)
-    for JavaScript rendering and CAPTCHA bypass
-    """
-    from pyppeteer import launch
-    print(f"Starting Python pyppeteer scraping for query: {query}")
-    
-    results = []
-    try:
-        # Launch browser with stealth options
-        browser = await launch(
-            headless=True,
-            args=[
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-infobars',
-                '--disable-dev-shm-usage',
-                '--disable-accelerated-2d-canvas',
-                '--disable-gpu',
-                '--window-size=1920,1080',
-            ]
-        )
-        
-        # Calculate how many pages to scrape
-        max_pages = min(limit // 10 + (1 if limit % 10 > 0 else 0), 20)
-        
-        # Go through each page
-        for page_num in range(max_pages):
-            if len(results) >= limit:
-                break
-                
-            # Get a random Google domain
-            google_domain = get_random_google_domain()
-            start_index = page_num * 10
-            
-            # Create URL with randomized parameters
-            params = [
-                ('q', query),
-                ('start', str(start_index)),
-                ('num', '10'),
-                ('hl', 'en'),
-                ('gl', 'us'),
-            ]
-            
-            # Add some randomized parameters
-            if random.random() > 0.5:
-                params.append(('filter', '0'))
-            if random.random() > 0.5:
-                params.append(('pws', '0'))
-                
-            # Build the URL
-            url = f"{google_domain}/search?"
-            url += "&".join([f"{param[0]}={quote_plus(param[1]) if param[0] == 'q' else param[1]}" for param in params])
-            
-            # Create a new page
-            page = await browser.newPage()
-            
-            # Set random user agent
-            user_agent = get_random_user_agent()
-            await page.setUserAgent(user_agent)
-            
-            # Set extra headers
-            await page.setExtraHTTPHeaders({
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
-            })
-            
-            # Try to evade detection
-            await page.evaluateOnNewDocument("""
-                () => {
-                    // Overwrite the 'plugins' property to use a custom getter
-                    Object.defineProperty(navigator, 'plugins', {
-                        get: () => [1, 2, 3, 4, 5],
-                    });
-                    
-                    // Overwrite the 'languages' property
-                    Object.defineProperty(navigator, 'languages', {
-                        get: () => ['en-US', 'en'],
-                    });
-                    
-                    // Spoof webdriver-related properties
-                    const newProto = navigator.__proto__;
-                    delete newProto.webdriver;
-                    navigator.__proto__ = newProto;
-                    
-                    // Add a fake product sub
-                    Object.defineProperty(navigator, 'productSub', {
-                        get: () => '20030107',
-                    });
-                }
-            """)
-            
-            # Navigate to the URL
-            print(f"Navigating to: {url}")
-            await page.goto(url, {'waitUntil': 'networkidle0', 'timeout': 60000})
-            
-            # Check for CAPTCHA
-            content = await page.content()
-            if "captcha" in content.lower() or "unusual traffic" in content.lower():
-                print("CAPTCHA detected! Attempting to solve or bypass...")
-                
-                # Wait longer in case of CAPTCHA page
-                await asyncio.sleep(5)
-                
-                # Try to take a screenshot for debugging (optional)
-                # await page.screenshot({'path': f'captcha_{page_num}.png'})
-                
-                # Try to find and click the "I'm not a robot" checkbox
-                try:
-                    checkbox = await page.querySelector('div.recaptcha-checkbox-checkmark')
-                    if checkbox:
-                        await checkbox.click()
-                        await page.waitForNavigation({'waitUntil': 'networkidle0', 'timeout': 60000})
-                except Exception as e:
-                    print(f"Failed to solve CAPTCHA: {str(e)}")
-                    break
-                    
-                # Check again if we're still on CAPTCHA page
-                content = await page.content()
-                if "captcha" in content.lower() or "unusual traffic" in content.lower():
-                    print("Still on CAPTCHA page, skipping this method")
-                    break
-            
-            # Extract search results
-            page_results = await page.evaluate('''
-                () => {
-                    const resultItems = [];
-                    const resultElements = document.querySelectorAll('div.g, div.yuRUbf, div.tF2Cxc, div[data-hveid]');
-                    
-                    resultElements.forEach((element, index) => {
-                        const titleElement = element.querySelector('h3');
-                        const linkElement = element.querySelector('a');
-                        const snippetElement = element.querySelector('.VwiC3b, .st, div[data-snc], .lEBKkf');
-                        
-                        if (titleElement && linkElement) {
-                            const title = titleElement.innerText.trim();
-                            const link = linkElement.href;
-                            const snippet = snippetElement ? snippetElement.innerText.trim() : '';
-                            
-                            // Only add if we have valid title and link
-                            if (title && link && link.startsWith('http')) {
-                                resultItems.push({
-                                    title,
-                                    link,
-                                    snippet,
-                                    position: index + 1,
-                                    source: 'google-pyppeteer'
-                                });
-                            }
-                        }
-                    });
-                    
-                    return resultItems;
-                }
-            ''')
-            
-            print(f"Found {len(page_results)} results on page {page_num + 1}")
-            
-            # Add unique results to our list
-            for result in page_results:
-                if not any(r['link'] == result['link'] for r in results):
-                    results.append(result)
-                
-                if len(results) >= limit:
-                    break
-            
-            # Close the page to free memory
-            await page.close()
-            
-            # Add a delay between pages
-            delay = add_natural_delay()
-            print(f"Waiting {delay:.2f}s before next page...")
-        
-        # Close the browser
-        await browser.close()
-        
-    except Exception as e:
-        print(f"Error in pyppeteer scraping: {str(e)}")
-    
-    print(f"Python pyppeteer scraping complete, found {len(results)} results")
-    return results[:limit]
-
 def scrape_google_with_requests_html(query, limit=200):
     """
     Scrape Google search results using requests-html with POST requests
     to bypass some scraping protection
     """
+    if session is None:
+        print("Error: requests_html module could not be imported properly")
+        return []
+        
     print(f"Starting Python requests-html scraping for query: {query}")
     
     all_results = []
@@ -371,8 +191,8 @@ def scrape_google_with_requests_html(query, limit=200):
             
             # Use session for cookies persistence
             try:
-                # Try POST request first (less likely to be blocked)
-                print(f"Making POST request to {url}")
+                # Use refined GET request with anti-detection measures
+                print(f"Making GET request to {url}")
                 
                 # Add a referer to look more legitimate
                 if page_num > 0:
@@ -380,114 +200,109 @@ def scrape_google_with_requests_html(query, limit=200):
                 else:
                     headers["Referer"] = f"{google_domain}/"
                 
-                # Make the POST request
-                response = session.post(
-                    url, 
-                    data=search_params,
+                # Prepare the URL with search parameters
+                url_with_params = f"{url}?" + "&".join([f"{k}={quote_plus(v) if k == 'q' else v}" for k, v in search_params.items()])
+                
+                # Make the GET request
+                response = session.get(
+                    url_with_params,
                     headers=headers,
                     timeout=30
                 )
                 
                 # Check for CAPTCHA or block
                 if response.status_code == 429 or "captcha" in response.text.lower() or "unusual traffic" in response.text.lower():
-                    print("POST blocked (CAPTCHA or rate limit). Trying GET as fallback...")
+                    print("GET blocked (CAPTCHA or rate limit). Trying with different domain and headers...")
                     
-                    # Fall back to GET with different parameters and headers
+                    # Retry with different parameters and headers
                     headers = generate_realistic_headers()  # Fresh headers
-                    url = f"{url}?" + "&".join([f"{k}={quote_plus(v) if k == 'q' else v}" for k, v in search_params.items()])
                     
                     # Different Google domain for the retry
-                    url = url.replace(google_domain, get_random_google_domain())
-                    response = session.get(url, headers=headers, timeout=30)
+                    new_google_domain = get_random_google_domain()
+                    url = f"{new_google_domain}/search"
+                    url_with_params = f"{url}?" + "&".join([f"{k}={quote_plus(v) if k == 'q' else v}" for k, v in search_params.items()])
                     
-                    if response.status_code == 429 or "captcha" in response.text.lower():
-                        print("GET also blocked. Adding longer delay before next attempt...")
-                        time.sleep(random.uniform(10, 15))
-                        continue
-            
-            except Exception as e:
-                print(f"POST request failed: {str(e)}. Trying GET...")
-                # Fall back to GET request
-                url = f"{url}?" + "&".join([f"{k}={quote_plus(v) if k == 'q' else v}" for k, v in search_params.items()])
-                response = session.get(url, headers=headers, timeout=30)
-            
-            # Check if we got a valid response
-            if response.status_code != 200:
-                print(f"Error: Status code {response.status_code}")
-                # Add a delay before next attempt
-                time.sleep(random.uniform(5, 10))
-                continue
-                
-            # Parse results using requests_html
-            page_results = []
-            
-            # Render JavaScript (if needed)
-            if "window.google" in response.text:
-                try:
-                    response.html.render(timeout=30)
-                except Exception as e:
-                    print(f"JavaScript rendering failed: {str(e)}")
-            
-            # Find all search result containers
-            result_containers = response.html.find('div.g, div.yuRUbf, div.tF2Cxc, div[data-hveid], .Gx5Zad')
-            
-            for container in result_containers:
-                try:
-                    # Look for title and link
-                    title_el = container.find('h3', first=True)
-                    link_el = container.find('a', first=True)
+                    # Add slight delay before retry
+                    time.sleep(2)
+                    response = session.get(url_with_params, headers=headers, timeout=30)
                     
-                    # Look for snippet with multiple possible selectors
-                    snippet_el = None
-                    for selector in ['.VwiC3b', '.lEBKkf', 'div[data-snc]', '.st']:
-                        snippet_el = container.find(selector, first=True)
-                        if snippet_el:
-                            break
-                    
-                    if title_el and link_el:
-                        title = title_el.text.strip()
-                        link = link_el.attrs.get('href', '')
-                        snippet = snippet_el.text.strip() if snippet_el else ''
-                        
-                        # Validate link
-                        if title and link and link.startswith('http'):
-                            result = {
-                                'title': title,
-                                'link': link,
-                                'snippet': snippet,
-                                'position': len(all_results) + 1,
-                                'source': 'google-requests-html'
-                            }
-                            page_results.append(result)
-                except Exception as e:
+                # Check if we got a valid response
+                if response.status_code != 200:
+                    print(f"Error: Status code {response.status_code}")
                     continue
-            
-            print(f"Found {len(page_results)} results on page {page_num + 1}")
-            
-            # Add unique results
-            for result in page_results:
-                if not any(r['link'] == result['link'] for r in all_results):
-                    all_results.append(result)
-                    
-                if len(all_results) >= limit:
-                    break
-            
-            # If no results found on this page, break
-            if len(page_results) == 0:
-                break
                 
-            # Add a natural delay between pages
-            delay = add_natural_delay()
-            print(f"Waiting {delay:.2f}s before next page...")
-            
-    except Exception as e:
-        print(f"Error in requests-html scraping: {str(e)}")
+                # Parse the results
+                page_results = []
+                
+                # Find all search result containers
+                for element in response.html.find('div.g, .Gx5Zad, .tF2Cxc, .yuRUbf, div[data-hveid]'):
+                    try:
+                        # Find title and link elements
+                        title_el = element.find('h3', first=True)
+                        link_el = element.find('a', first=True)
+                        snippet_el = element.find('.VwiC3b, .lEBKkf, div[data-snc], .st', first=True)
+                        
+                        if title_el and link_el:
+                            title = title_el.text.strip()
+                            link = link_el.attrs.get('href', '')
+                            snippet = snippet_el.text.strip() if snippet_el else ''
+                            
+                            # Only add valid results
+                            if title and link and link.startswith('http'):
+                                page_results.append({
+                                    'title': title,
+                                    'link': link,
+                                    'snippet': snippet,
+                                    'position': len(page_results) + 1,
+                                    'source': 'google-python-post'
+                                })
+                    except Exception as e:
+                        # Skip problematic results
+                        print(f"Error parsing result: {e}")
+                        continue
+                
+                print(f"Found {len(page_results)} results on page {page_num + 1}")
+                
+                # Add unique results to our collection
+                for result in page_results:
+                    if not any(r['link'] == result['link'] for r in all_results):
+                        all_results.append(result)
+                    
+                    if len(all_results) >= limit:
+                        break
+                
+                # Check if we should proceed to the next page
+                if len(page_results) == 0:
+                    print("No results found on this page, stopping pagination")
+                    break
+                
+                # Check if there's a next page button
+                next_button = response.html.find('a#pnnext, a.pn', first=True)
+                if not next_button:
+                    print("No more results pages found")
+                    break
+                
+                # Add a delay between pages
+                delay = add_natural_delay()
+                print(f"Waiting {delay:.2f}s before next page...")
+                
+            except Exception as e:
+                print(f"Error scraping page {page_num + 1}: {str(e)}")
+                continue
         
-    print(f"Python requests-html scraping complete, found {len(all_results)} results")
-    return all_results[:limit]
+        print(f"Python requests-html scraping complete, found {len(all_results)} results")
+        return all_results[:limit]
+        
+    except Exception as e:
+        print(f"Error in Python scraping: {str(e)}")
+        return []
 
 def get_similar_websites_with_python(domain):
     """Find similar websites using Python-based scraping"""
+    if session is None:
+        print("Error: requests_html module could not be imported properly")
+        return []
+        
     print(f"Finding similar websites for domain: {domain} using Python")
     domain_name = domain.replace('www.', '')
     
@@ -523,24 +338,35 @@ def get_similar_websites_with_python(domain):
                     'gl': 'us'
                 }
                 
-                # Try POST first
+                # Use GET with anti-detection measures
                 url = f"{google_domain}/search"
                 try:
-                    response = session.post(
-                        url,
-                        data=search_params,
-                        headers=headers,
-                        timeout=30
-                    )
+                    # Build the search URL with parameters
+                    query_url = f"{url}?" + "&".join([f"{k}={quote_plus(v) if k == 'q' else v}" for k, v in search_params.items()])
+                    
+                    # Add a referer to look more legitimate
+                    headers["Referer"] = f"{google_domain}/"
+                    
+                    # Make GET request
+                    print(f"Making GET request to find competitors: {query_url}")
+                    response = session.get(query_url, headers=headers, timeout=30)
                     
                     if response.status_code != 200 or "captcha" in response.text.lower():
-                        # Fall back to GET
-                        query_url = f"{url}?q={quote_plus(query)}&num=30&hl=en&gl=us"
+                        # Try with different domain and headers
+                        print("First GET attempt blocked, trying with different domain and headers...")
+                        headers = generate_realistic_headers()  # Fresh headers
+                        new_google_domain = get_random_google_domain()
+                        query_url = f"{new_google_domain}/search?q={quote_plus(query)}&num=30&hl=en&gl=us"
+                        
+                        # Add slight delay before retry
+                        time.sleep(2)
                         response = session.get(query_url, headers=headers, timeout=30)
                 
-                except Exception:
-                    # Fall back to GET if POST fails
+                except Exception as e:
+                    # Try again with simplified parameters
+                    print(f"Error making request: {str(e)}, trying simplified approach")
                     query_url = f"{url}?q={quote_plus(query)}&num=30&hl=en&gl=us"
+                    headers = generate_realistic_headers()  # Fresh headers
                     response = session.get(query_url, headers=headers, timeout=30)
                 
                 # Check for valid response
@@ -605,12 +431,6 @@ def main():
         # Test requests-html scraper
         results = scrape_google_with_requests_html(query, limit)
         print(json.dumps(results, indent=2))
-        
-        # Test pyppeteer scraper (requires event loop)
-        loop = asyncio.get_event_loop()
-        pyppeteer_results = loop.run_until_complete(scrape_google_with_pyppeteer(query, limit))
-        print(json.dumps(pyppeteer_results, indent=2))
-        
     elif function == "similar":
         results = get_similar_websites_with_python(query)
         print(json.dumps(results, indent=2))
