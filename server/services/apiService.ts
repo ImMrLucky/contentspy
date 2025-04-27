@@ -497,20 +497,37 @@ export const extractDomain = (url: string): string => {
 // Get similar websites using headless browser with HTTP fallback
 export const getSimilarWebsites = async (domain: string): Promise<string[]> => {
   try {
-    // Try headless browser first (primary method)
+    // Try Selenium first (most effective against CAPTCHA)
+    try {
+      console.log(`Using Selenium for similar websites to: ${domain}`);
+      const seleniumResults = await getSimilarWebsitesWithSelenium(domain);
+      if (seleniumResults && seleniumResults.length > 0) {
+        console.log(`Found ${seleniumResults.length} similar websites using Selenium`);
+        return seleniumResults;
+      } else {
+        console.log(`Selenium found 0 similar websites for ${domain}, trying next method...`);
+      }
+    } catch (seleniumError) {
+      console.error(`Error in Selenium scraping for similar websites: ${seleniumError}`);
+      console.log(`Falling back to headless browser for similar websites...`);
+    }
+    
+    // Try headless browser next
     try {
       console.log(`Using headless browser for similar websites to: ${domain}`);
       const results = await getSimilarWebsitesWithHeadlessBrowser(domain);
       if (results && results.length > 0) {
         console.log(`Found ${results.length} similar websites using headless browser`);
         return results;
+      } else {
+        console.log(`Headless browser found 0 similar websites for ${domain}, trying next method...`);
       }
     } catch (puppeteerError) {
       console.error(`Error in headless browser scraping for similar websites: ${puppeteerError}`);
       console.log(`Falling back to HTTP scraping for similar websites...`);
     }
     
-    // Fallback to HTTP scraper if headless browser fails
+    // Fallback to HTTP scraper as last resort
     console.log(`Trying HTTP scraping for similar websites to: ${domain}`);
     const httpResults = await getSimilarWebsitesWithHttp(domain);
     

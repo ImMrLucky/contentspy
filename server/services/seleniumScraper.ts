@@ -444,7 +444,8 @@ export async function scrapeGoogleWithSelenium(query: string, limit = 200): Prom
     console.error('Error in Selenium Google scraping:', error);
     
     // If we hit a CAPTCHA, wait longer before subsequent requests
-    if (error.message.includes('CAPTCHA')) {
+    const err = error as Error;
+    if (err.message && err.message.includes('CAPTCHA')) {
       console.log(`CAPTCHA detected, implementing longer backoff period`);
       await randomDelay(RATE_LIMIT.captchaBackoffDelay, RATE_LIMIT.captchaBackoffDelay * 1.5);
     }
