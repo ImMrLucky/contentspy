@@ -537,32 +537,32 @@ export const findCompetitorDomains = async (domain: string, limit = 10, keywords
     // This solves the Google CAPTCHA issue by having pre-defined reliable competitors
     const industryCompetitorsMap: { [key: string]: string[] } = {
       'boiler': [
-        'heatingforce.co.uk',
-        'boilerguide.co.uk',
-        'warmzilla.co.uk',
-        'boilerhut.co.uk',
-        'boxt.co.uk',
-        'directheating.co.uk',
-        'ukboilerdistributors.com',
-        'boilersupplies.com',
-        'plumbingforce.co.uk',
-        'plumbworld.co.uk',
-        'heatingcentral.com',
+        'grainger.com',
+        'supplyhouse.com',
+        'boilersupplyco.com',
+        'weil-mclain.com',
+        'pexuniverse.com',
+        'ferguson.com',
+        'zoro.com',
+        'homedepot.com',
+        'lowes.com',
+        'supply.com',
+        'forwardthinking.com',
         'boilerpartsupply.com'
       ],
       'plumbing': [
-        'plumbworld.co.uk',
-        'victorianplumbing.co.uk',
         'plumbingsupply.com',
-        'plumbingsupplygroup.com',
-        'plumbingforless.com',
         'supplyhouse.com',
         'ferguson.com',
         'plumbmaster.com',
         'homedepot.com',
         'lowes.com',
+        'build.com',
+        'amazon.com',
+        'menards.com',
+        'faucetdirect.com',
         'plumbersstock.com',
-        'bathroomcity.co.uk'
+        'zoro.com'
       ],
       'hvac': [
         'grainger.com',
@@ -572,11 +572,11 @@ export const findCompetitorDomains = async (domain: string, limit = 10, keywords
         'carrier.com',
         'trane.com',
         'lennox.com',
-        'daikin.com',
         'york.com',
-        'mitsubishi-electric.com',
+        'acwholesalers.com',
         'rheem.com',
-        'goodmanmfg.com'
+        'goodmanmfg.com',
+        'hvacpartsshop.com'
       ],
       'retail': [
         'amazon.com',
