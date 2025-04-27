@@ -1,22 +1,17 @@
-declare module 'proxy-lists' {
-  import { EventEmitter } from 'events';
-  
-  export interface ProxyListsOptions {
-    countries?: string[];
-    protocols?: string[];
-    anonymityLevels?: string[];
-    ssl?: boolean;
-    lastTested?: number;
-  }
-  
-  export interface Proxy {
-    host: string;
-    port: number;
-    protocols?: string[];
+declare module 'free-proxy' {
+  export interface ProxyOptions {
     country?: string;
-    anonymityLevel?: string;
-    lastTested?: number;
+    https?: boolean;
+    anonymity?: number;
   }
   
-  export function getProxies(options?: ProxyListsOptions): EventEmitter;
+  export default class FreeProxy {
+    constructor(options?: ProxyOptions);
+    
+    country: string;
+    protocol: string;
+    
+    get(limit?: number): Promise<string[]>;
+    getRandom(): Promise<string>;
+  }
 }

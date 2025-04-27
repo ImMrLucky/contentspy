@@ -57,6 +57,7 @@
     "express-session": "^1.18.1",
     "file-saver": "^2.0.5",
     "framer-motion": "^11.13.1",
+    "free-proxy": "^0.2.1",
     "http-proxy-agent": "^7.0.2",
     "input-otp": "^1.4.2",
     "jspdf": "^3.0.1",

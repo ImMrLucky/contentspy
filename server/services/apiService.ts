@@ -4,8 +4,7 @@ import natural from 'natural';
 import { CompetitorContent } from '@shared/schema';
 import { URL } from 'url';
 import { HttpProxyAgent } from 'http-proxy-agent';
-import * as proxyLists from 'proxy-lists';
-import stream from 'stream';
+import FreeProxy from 'free-proxy';
 
 // API Keys (Only using SimilarWeb now)
 const SIMILARWEB_API_KEY = process.env.SIMILARWEB_API_KEY || '05dbc8d629d24585947c0c0d4c521114';
@@ -118,6 +117,12 @@ const getRandomUserAgent = () => {
   return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
 };
 
+// Initialize FreeProxy instance
+const freeProxyClient = new FreeProxy({
+  country: 'us',
+  https: true
+});
+
 // Function to refresh the proxy list
 const refreshProxyList = async (): Promise<void> => {
   if (Date.now() - lastProxyFetch < PROXY_FETCH_INTERVAL) {
@@ -134,60 +139,76 @@ const refreshProxyList = async (): Promise<void> => {
   console.log('Refreshing proxy list...');
   
   try {
-    // Collect proxies using stream and promise
-    const proxyPromise = new Promise<Proxy[]>((resolve) => {
-      const newProxies: Proxy[] = [];
-      
-      const options = {
-        // Try to find proxies that are likely to work with Google
-        countries: ['us', 'ca', 'mx', 'br'],
-        protocols: ['http', 'https'],
-        anonymityLevels: ['anonymous', 'elite', 'high'],
-      };
-      
-      const proxyStream = proxyLists.getProxies(options);
-      
-      proxyStream.on('data', (proxies: any) => {
-        if (Array.isArray(proxies)) {
-          proxies.forEach(proxy => {
-            if (proxy && proxy.host && proxy.port) {
+    // Array of countries to try (focus on North America for best Google compatibility)
+    const countries = ['us', 'ca', 'mx', 'gb', 'de', 'fr'];
+    const newProxies: Proxy[] = [];
+    
+    // Fetch a batch of proxies from each country
+    for (const country of countries) {
+      try {
+        // Create new instance for each country with HTTPS
+        const httpsProxyClient = new FreeProxy({
+          country: country,
+          https: true
+        });
+        
+        // Try to get proxies with HTTPS
+        const httpsProxies = await httpsProxyClient.get(20);
+        
+        if (Array.isArray(httpsProxies)) {
+          httpsProxies.forEach(proxyStr => {
+            const [host, portStr] = proxyStr.split(':');
+            const port = parseInt(portStr, 10);
+            
+            if (host && !isNaN(port)) {
               newProxies.push({
-                host: proxy.host,
-                port: proxy.port,
-                protocols: proxy.protocols || ['http'],
+                host,
+                port,
+                protocols: ['https'],
                 lastUsed: 0,
                 failCount: 0,
-                country: proxy.country || 'unknown'
+                country: country
               });
             }
           });
         }
-      });
-      
-      proxyStream.on('end', () => {
-        console.log(`Found ${newProxies.length} available proxies`);
-        resolve(newProxies);
-      });
-      
-      proxyStream.on('error', (err) => {
-        console.error('Error getting proxies:', err);
-        resolve([]);
-      });
-      
-      // Set a timeout in case the stream never ends
-      setTimeout(() => {
-        if (newProxies.length === 0) {
-          console.log('Proxy fetch timed out, resolving with empty list');
-          resolve([]);
-        } else {
-          console.log(`Proxy fetch timed out, resolving with ${newProxies.length} proxies found so far`);
-          resolve(newProxies);
+        
+        // Create new instance for HTTP
+        const httpProxyClient = new FreeProxy({
+          country: country,
+          https: false
+        });
+        
+        // Also get HTTP proxies
+        const httpProxies = await httpProxyClient.get(10);
+        
+        if (Array.isArray(httpProxies)) {
+          httpProxies.forEach(proxyStr => {
+            const [host, portStr] = proxyStr.split(':');
+            const port = parseInt(portStr, 10);
+            
+            if (host && !isNaN(port)) {
+              newProxies.push({
+                host,
+                port,
+                protocols: ['http'],
+                lastUsed: 0,
+                failCount: 0,
+                country: country
+              });
+            }
+          });
         }
-      }, 10000); // 10 second timeout
-    });
-    
-    // Wait for proxy list to be populated
-    const newProxies = await proxyPromise;
+        
+        console.log(`Found ${newProxies.length} proxies so far (added ${country})`);
+        
+        // Add a small delay between country fetches
+        await randomDelay(500, 1500);
+        
+      } catch (countryError) {
+        console.error(`Error fetching proxies for country ${country}:`, countryError);
+      }
+    }
     
     // Add new proxies that aren't already in the list
     let addedCount = 0;
