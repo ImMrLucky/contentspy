@@ -712,9 +712,47 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
       return cachedResults;
     }
     
-    console.log(`No cached results found. Using headless browser for Google scraping...`);
+    // Try using SerpAPI with the SERPAPI_KEY environment variable if available
+    const serpApiKey = process.env.SERPAPI_KEY;
+    if (serpApiKey) {
+      try {
+        console.log(`Using SerpAPI for query: "${query}"`);
+        const encodedQuery = encodeURIComponent(query);
+        const serpApiUrl = `https://serpapi.com/search.json?q=${encodedQuery}&api_key=${serpApiKey}&engine=google&num=${Math.min(limit, 100)}&gl=us`;
+        
+        const response = await fetch(serpApiUrl);
+        if (!response.ok) {
+          throw new Error(`SerpAPI returned status ${response.status}`);
+        }
+        
+        const data = await response.json();
+        if (data.organic_results && data.organic_results.length > 0) {
+          console.log(`SerpAPI returned ${data.organic_results.length} results`);
+          
+          // Transform SerpAPI results to our format
+          const transformedResults = data.organic_results.map((result: any, index: number) => ({
+            title: result.title,
+            link: result.link,
+            snippet: result.snippet,
+            position: index + 1,
+            source: 'serpapi'
+          }));
+          
+          // Cache the results
+          cacheResults(cacheKey, transformedResults);
+          return transformedResults;
+        } else {
+          console.log(`SerpAPI returned 0 results, falling back to scraping methods`);
+        }
+      } catch (serpApiError) {
+        console.error(`Error using SerpAPI: ${serpApiError}`);
+        console.log(`Falling back to scraping methods...`);
+      }
+    } else {
+      console.log(`No SERPAPI_KEY found, using headless browser scraping...`);
+    }
     
-    // Try headless browser first (primary method)
+    // Try headless browser next
     try {
       console.log(`Trying headless browser for Google scraping: "${query}"`);
       const results = await scrapeGoogleWithHeadlessBrowser(query, limit);

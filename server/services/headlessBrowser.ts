@@ -59,7 +59,7 @@ const requestHistory = {
 };
 
 // Constants for browser configuration
-const BROWSER_CONFIG: puppeteer.LaunchOptions = {
+const BROWSER_CONFIG: any = {
   headless: true, // Use headless mode
   args: [
     '--no-sandbox',
@@ -135,7 +135,7 @@ async function getBrowser() {
 }
 
 // Anti-bot detection features
-async function setupAntiDetection(page: puppeteer.Page) {
+async function setupAntiDetection(page: any) {
   const userAgent = getRandomUserAgent();
   
   // Set a random user agent
@@ -146,8 +146,13 @@ async function setupAntiDetection(page: puppeteer.Page) {
     // Overwrite the languages property to make it less fingerprintable
     Object.defineProperty(navigator, 'languages', {
       get: function() {
-        return ['en-US', 'en'];
+        return ['en-US', 'en', 'en-GB'];
       },
+    });
+    
+    // Add a realistic-looking hardware concurrency value
+    Object.defineProperty(navigator, 'hardwareConcurrency', {
+      get: () => Math.floor(Math.random() * 8) + 2, // Random value between 2-10
     });
     
     // Modify plugins length to appear more like a regular browser
@@ -164,12 +169,18 @@ async function setupAntiDetection(page: puppeteer.Page) {
       },
     });
     
-    // Mask the webdriver property
+    // Mask the webdriver property more thoroughly
+    delete (Object.getPrototypeOf(navigator) as any).webdriver;
     Object.defineProperty(navigator, 'webdriver', {
       get: () => false,
     });
     
-    // Add a fake canvas fingerprint based on common patterns
+    // Add a more realistic window.chrome property that Google often checks
+    if ((window as any).chrome === undefined) {
+      (window as any).chrome = {};
+    }
+    
+    // Add a highly random canvas fingerprint to avoid detection
     const originalGetContext = HTMLCanvasElement.prototype.getContext;
     HTMLCanvasElement.prototype.getContext = function(type: string, ...args: any[]) {
       const context = originalGetContext.apply(this, [type, ...args]);
@@ -177,12 +188,25 @@ async function setupAntiDetection(page: puppeteer.Page) {
         const ctx = context as CanvasRenderingContext2D;
         const originalFillText = ctx.fillText;
         ctx.fillText = function(...args: any[]) {
+          // Add subtle random modifications to text rendering - avoid fingerprinting
+          if (Math.random() > 0.9) {
+            args[1] = (args[1] as number) + (Math.random() * 0.001 - 0.0005);
+            args[2] = (args[2] as number) + (Math.random() * 0.001 - 0.0005);
+          }
           return originalFillText.apply(this, args);
         };
         
         const originalGetImageData = ctx.getImageData;
         ctx.getImageData = function(...args: any[]) {
-          return originalGetImageData.apply(this, args);
+          const imageData = originalGetImageData.apply(this, args);
+          // Slightly modify a few random pixels to avoid fingerprinting
+          if (imageData && imageData.data && Math.random() > 0.9) {
+            for (let i = 0; i < 10; i++) {
+              const idx = Math.floor(Math.random() * imageData.data.length / 4) * 4;
+              imageData.data[idx] = (imageData.data[idx] + Math.floor(Math.random() * 2)) % 256;
+            }
+          }
+          return imageData;
         };
       }
       return context;
@@ -223,7 +247,7 @@ const exponentialBackoff = async (attempt: number): Promise<void> => {
 export const scrapeGoogleWithHeadlessBrowser = async (query: string, limit = 200): Promise<any[]> => {
   console.log(`Puppeteer: Scraping Google for query: "${query}"`);
   const results: any[] = [];
-  let browser: puppeteer.Browser | null = null;
+  let browser: any = null;
   
   // Check if we're being rate limited
   if (requestHistory.isRateLimited()) {
@@ -327,7 +351,7 @@ export const scrapeGoogleWithHeadlessBrowser = async (query: string, limit = 200
         ]);
         
         // Add a small delay between page loads
-        await new Promise(r => setTimeout(r, 1000 + Math.random() * 2000));
+        await randomDelay(1000, 2000);
       }
       
       // Extract organic search results from the page with a more robust approach
@@ -489,7 +513,7 @@ export const scrapeGoogleWithHeadlessBrowser = async (query: string, limit = 200
  */
 export const getSimilarWebsitesWithHeadlessBrowser = async (domain: string): Promise<string[]> => {
   console.log(`Puppeteer: Finding similar websites for domain: ${domain}`);
-  let browser: puppeteer.Browser | null = null;
+  let browser: any = null;
   const similarSites: string[] = [];
   
   // Check if we're being rate limited
@@ -531,201 +555,95 @@ export const getSimilarWebsitesWithHeadlessBrowser = async (domain: string): Pro
       try {
         // First navigate to Google homepage
         await page.goto('https://www.google.com', { waitUntil: 'networkidle2' });
-        
-        // Add a short delay to mimic human behavior
         await randomDelay(1000, 2000);
         
-        // Clear any existing text in search box
-        await page.evaluate(() => {
-          const input = document.querySelector('input[name="q"]');
-          if (input) (input as HTMLInputElement).value = '';
-        });
-        
-        // Now perform search from the homepage
+        // Enter search query
         await page.type('input[name="q"]', query);
-        
-        // Short delay before pressing Enter
         await randomDelay(500, 1500);
         
-        // Press Enter and wait for results
+        // Submit search
         await Promise.all([
           page.waitForNavigation({ waitUntil: 'networkidle2' }),
           page.keyboard.press('Enter')
         ]);
-      } catch (navigationError) {
-        console.error(`Error during stealthy competitor search: ${navigationError}`);
-        console.log(`Trying direct URL approach instead...`);
-        
-        // If stealthy approach fails, use direct URL as fallback
-        const safeQuery = encodeURIComponent(query);
-        const searchUrl = `https://www.google.com/search?q=${safeQuery}&hl=en&gl=us&num=20`;
-        
-        // Navigate to search results
-        await page.goto(searchUrl, { waitUntil: 'networkidle2' });
+      } catch (error) {
+        console.error(`Error during stealthy navigation: ${error}`);
+        continue; // Try next query
       }
       
-      // Check if we got a CAPTCHA using enhanced detection
+      // Check for CAPTCHA
       const isCaptcha = await page.evaluate(() => {
         return document.title.includes('unusual traffic') || 
                document.title.includes('CAPTCHA') ||
-               document.querySelector('form#captcha-form') !== null ||
-               document.querySelector('div#recaptcha') !== null ||
-               document.querySelector('div[class*="recaptcha"]') !== null ||
-               document.body.innerText.includes('unusual traffic from your computer network') ||
-               document.body.innerText.includes('solve the above CAPTCHA');
+               document.querySelector('form#captcha-form') !== null;
       });
       
       if (isCaptcha) {
-        console.log('CAPTCHA detected, trying next query or falling back');
-        continue;
+        console.log('CAPTCHA detected, skipping this query');
+        continue; // Try next query
       }
       
-      // Extract domains from search results with enhanced extraction
-      const extractedDomains = await page.evaluate((targetDomain: string) => {
-        const domains: string[] = [];
+      // Extract competitor domains from search results
+      const domains = await page.evaluate((targetDomain: string) => {
+        const foundDomains: string[] = [];
         
-        // More targeted approach - find search result containers first
-        const resultSelectors = [
-          'div.g:not(.kno-kp)', '.Gx5Zad', '.tF2Cxc', '.yuRUbf', 
-          'div[data-sokoban-container]', 'div[data-hveid]'
-        ];
+        // Look for all links in the search results
+        const links = Array.from(document.querySelectorAll('a[href^="http"]'));
         
-        // Process all result containers to extract potential competitor URLs
-        let resultContainers: Element[] = [];
-        for (const selector of resultSelectors) {
-          const containers = document.querySelectorAll(selector);
-          if (containers.length > 0) {
-            resultContainers = [...resultContainers, ...Array.from(containers)];
+        for (const link of links) {
+          const href = link.getAttribute('href');
+          if (!href) continue;
+          
+          try {
+            // Extract domain from link
+            const url = new URL(href);
+            const domain = url.hostname.replace(/^www\./, '');
+            
+            // Skip if it's the original domain or common sites
+            if (domain === targetDomain || 
+                domain.includes('google.com') || 
+                domain.includes('youtube.com') || 
+                domain.includes('facebook.com') ||
+                domain.includes('linkedin.com') ||
+                domain.includes('twitter.com') ||
+                domain.includes('instagram.com')) {
+              continue;
+            }
+            
+            // Only add if we don't have it yet
+            if (!foundDomains.includes(domain)) {
+              foundDomains.push(domain);
+            }
+          } catch (error) {
+            continue; // Skip invalid URLs
           }
         }
         
-        // Filter out duplicates
-        resultContainers = Array.from(new Set(resultContainers));
-        
-        // First try to get links from specific result containers
-        if (resultContainers.length > 0) {
-          resultContainers.forEach(container => {
-            const links = container.querySelectorAll('a[href^="http"]');
-            links.forEach(link => {
-              try {
-                let href = link.getAttribute('href') || '';
-                
-                // Process Google redirect links
-                if (href.startsWith('/url?') || href.includes('/url?')) {
-                  const url = new URL(href, 'https://www.google.com');
-                  href = url.searchParams.get('q') || url.searchParams.get('url') || href;
-                }
-                
-                if (!href.startsWith('http')) return;
-                
-                // Extract and process domain
-                const url = new URL(href);
-                let domain = url.hostname.toLowerCase();
-                
-                // Normalize domain (remove www. prefix)
-                domain = domain.replace(/^www\./, '');
-                
-                // Filter out Google's own domains and the domain we're analyzing
-                if (domain.includes('google.') || domain === targetDomain) {
-                  return;
-                }
-                
-                // Filter out common non-competitor domains and low-quality results
-                const excludedDomains = [
-                  'wikipedia.org', 'twitter.com', 'facebook.com', 'linkedin.com',
-                  'instagram.com', 'youtube.com', 'pinterest.com', 'reddit.com', 
-                  'quora.com', 'medium.com', 'github.com', 'mozilla.org',
-                  'bing.com', 'yahoo.com', 'yandex.com', 'duckduckgo.com',
-                  'baidu.com', 'amazon.com', 'ebay.com', 'etsy.com'
-                ];
-                
-                if (excludedDomains.some(excluded => domain.includes(excluded))) {
-                  return;
-                }
-                
-                // Add domain if it's not already in the list
-                if (!domains.includes(domain)) {
-                  domains.push(domain);
-                }
-              } catch (error) {
-                // Skip invalid URLs
-              }
-            });
-          });
-        }
-        
-        // If we couldn't find domains from result containers, 
-        // fall back to scanning all links on the page
-        if (domains.length === 0) {
-          const links = Array.from(document.querySelectorAll('a[href^="http"]'));
-          
-          links.forEach(link => {
-            try {
-              let href = link.getAttribute('href') || '';
-              if (!href.startsWith('http')) return;
-              
-              // Extract domain
-              const url = new URL(href);
-              let domain = url.hostname.toLowerCase();
-              
-              // Normalize domain (remove www. prefix)
-              domain = domain.replace(/^www\./, '');
-              
-              // Apply the same filtering as above
-              if (domain.includes('google.') || domain === targetDomain) {
-                return;
-              }
-              
-              const excludedDomains = [
-                'wikipedia.org', 'twitter.com', 'facebook.com', 'linkedin.com',
-                'instagram.com', 'youtube.com', 'pinterest.com', 'reddit.com', 
-                'quora.com', 'medium.com', 'github.com', 'mozilla.org',
-                'bing.com', 'yahoo.com', 'yandex.com', 'duckduckgo.com',
-                'baidu.com', 'amazon.com', 'ebay.com', 'etsy.com'
-              ];
-              
-              if (excludedDomains.some(excluded => domain.includes(excluded))) {
-                return;
-              }
-              
-              // Add domain if not already in list
-              if (!domains.includes(domain)) {
-                domains.push(domain);
-              }
-            } catch (error) {
-              // Skip invalid URLs
-            }
-          });
-        }
-        
-        return domains;
+        return foundDomains;
       }, domain);
       
-      // Add unique domains to our collection
-      for (const extractedDomain of extractedDomains) {
-        if (!similarSites.includes(extractedDomain)) {
-          similarSites.push(extractedDomain);
+      // Add new domains to our collection
+      for (const newDomain of domains) {
+        if (!similarSites.includes(newDomain)) {
+          similarSites.push(newDomain);
         }
       }
       
-      console.log(`Found ${extractedDomains.length} potential competitors from query: "${query}"`);
+      console.log(`Found ${domains.length} potential competitor domains from query "${query}"`);
       
-      // Add a significant random delay between queries to avoid rate limiting
-      await randomDelay(
-        RATE_LIMIT.minDelayBetweenRequests, 
-        RATE_LIMIT.maxDelayBetweenRequests
-      );
+      // Add a delay before the next query
+      await randomDelay(RATE_LIMIT.minDelayBetweenRequests, RATE_LIMIT.maxDelayBetweenRequests);
     }
     
-    console.log(`Successfully found ${similarSites.length} similar websites for ${domain}`);
-    return similarSites.slice(0, 15); // Return at most 15 domains
+    console.log(`Found ${similarSites.length} similar websites for ${domain}`);
+    return similarSites.slice(0, 10); // Limit to 10 results
     
   } catch (error) {
-    console.error(`Error finding similar websites with Puppeteer:`, error);
+    console.error(`Error finding similar websites:`, error);
     
-    // If Puppeteer fails completely, try the HTTP method as fallback
+    // Fall back to HTTP method if headless browser fails completely
     if (similarSites.length === 0) {
-      console.log('Falling back to HTTP scraper');
+      console.log('Falling back to HTTP scraper for finding similar websites');
       return getSimilarWebsitesWithHttp(domain);
     }
     
