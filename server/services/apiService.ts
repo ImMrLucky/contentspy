@@ -59,57 +59,101 @@ const cacheResults = (cacheKey: string, results: any[]): void => {
   };
 };
 
-// Helper function for adding random delays between requests to avoid rate limits
+// Enhanced random delay function with more variability to avoid rate limits
 const randomDelay = async (min = 1000, max = 3000) => {
-  const delay = Math.floor(Math.random() * (max - min + 1)) + min;
-  return new Promise(resolve => setTimeout(resolve, delay));
+  // Add a more natural distribution with occasional longer pauses
+  let delay;
+  const useExponentialDistribution = Math.random() < 0.3; // 30% chance of longer delay
+  
+  if (useExponentialDistribution) {
+    // Occasional longer delays that follow a more exponential distribution
+    const lambda = 1 / ((max - min) / 2);
+    delay = min + Math.floor(-Math.log(Math.random()) / lambda);
+    delay = Math.min(delay, max * 2); // Cap at 2x max to avoid extreme outliers
+  } else {
+    // Normal uniform distribution most of the time
+    delay = Math.floor(Math.random() * (max - min + 1)) + min;
+  }
+  
+  // Add subtle randomized sub-second variations to appear more human-like
+  const microDelay = Math.random() * 100;
+  return new Promise(resolve => setTimeout(resolve, delay + microDelay));
 };
 
-// Improved exponential backoff for retrying after rate limits
+// Significantly improved exponential backoff with better jitter and human-like variability
 const exponentialBackoff = async (attempt = 0, baseDelay = 5000, maxAttempts = 3): Promise<boolean> => {
   if (attempt >= maxAttempts) return false;
   
-  // Add more randomization to make patterns less detectable
-  const jitter = Math.random() * 1000 - 500; // +/- 500ms jitter
-  const delay = baseDelay * Math.pow(2, attempt) + jitter;
-  console.log(`Rate limit encountered. Backing off for ${Math.round(delay / 1000)} seconds (attempt ${attempt + 1}/${maxAttempts})...`);
-  await new Promise(resolve => setTimeout(resolve, delay));
+  // Full jitter exponential backoff algorithm (AWS recommendation)
+  // This spreads out retry call distribution and reduces server load spikes
+  const expDelay = baseDelay * Math.pow(2, attempt);
+  const jitterFactor = Math.random(); // Between 0 and 1
+  const delay = Math.floor(expDelay * jitterFactor);
+  
+  // Add human-like random additions (people don't wait for exactly X seconds)
+  const humanFactor = Math.floor(Math.random() * 1000); // 0-1000ms extra
+  const totalDelay = delay + humanFactor;
+  
+  console.log(`Rate limit encountered. Backing off for ${Math.round(totalDelay / 1000)} seconds (attempt ${attempt + 1}/${maxAttempts})...`);
+  await new Promise(resolve => setTimeout(resolve, totalDelay));
   return true;
 };
 
-// Extended user agents list with more modern browsers and variations
+// Extended user agents list with even more variations for better rotation
 const USER_AGENTS = [
-  // Chrome
+  // Chrome - Latest versions with different OS platforms
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36',
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36',
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36',
   
-  // Firefox
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0',
+  // Firefox - Various versions
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/109.0',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:115.0) Gecko/20100101 Firefox/115.0',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:119.0) Gecko/20100101 Firefox/119.0',
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/109.0',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:115.0) Gecko/20100101 Firefox/115.0',
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:118.0) Gecko/20100101 Firefox/118.0',
+  'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/109.0',
+  'Mozilla/5.0 (X11; Linux x86_64; rv:115.0) Gecko/20100101 Firefox/115.0',
   'Mozilla/5.0 (X11; Linux x86_64; rv:119.0) Gecko/20100101 Firefox/119.0',
   
-  // Safari
+  // Safari - Different versions
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.6 Safari/605.1.15',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Safari/605.1.15',
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15',
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
   
   // Edge
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36 Edg/116.0.1938.62',
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36 Edg/117.0.2045.47',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36 Edg/118.0.2088.61',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36 Edg/116.0.1938.62',
   
   // Opera
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36 OPR/102.0.0.0',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36 OPR/103.0.0.0',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36 OPR/102.0.0.0',
   
   // Mobile
   'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
   'Mozilla/5.0 (iPad; CPU OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
+  'Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
   'Mozilla/5.0 (Linux; Android 13; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36',
-  'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Mobile Safari/537.36'
+  'Mozilla/5.0 (Linux; Android 13; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Mobile Safari/537.36',
+  'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Mobile Safari/537.36',
+  'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Mobile Safari/537.36'
 ];
 
 // Function to get a random user agent from the list
@@ -196,23 +240,56 @@ const refreshProxyList = async (): Promise<void> => {
     if (newProxies.length === 0) {
       console.log('Adding fallback proxies to ensure service continuity');
       
-      // List of some known public proxies (may need to be updated periodically)
+      // Much larger list of public proxies from diverse sources for better rotation
       const fallbackProxies = [
-        { host: '34.124.225.130', port: 8080, country: 'us' },
-        { host: '20.111.54.16', port: 80, country: 'us' },
-        { host: '185.235.16.1', port: 80, country: 'us' },
-        { host: '104.223.135.178', port: 10000, country: 'us' },
-        { host: '64.225.4.29', port: 9996, country: 'us' },
-        { host: '34.81.72.31', port: 80, country: 'us' },
-        { host: '158.69.53.98', port: 9300, country: 'ca' },
-        { host: '159.203.61.169', port: 3128, country: 'ca' },
-        { host: '54.39.209.250', port: 80, country: 'ca' },
-        { host: '200.25.254.193', port: 54240, country: 'mx' },
-        { host: '167.71.5.83', port: 3128, country: 'gb' },
-        { host: '178.128.170.48', port: 80, country: 'gb' },
-        { host: '194.35.9.24', port: 80, country: 'de' },
-        { host: '185.189.112.133', port: 3128, country: 'de' },
-        { host: '178.33.3.163', port: 8080, country: 'fr' },
+        // US proxies
+        { host: '34.145.226.229', port: 3128, country: 'us' },
+        { host: '104.129.194.95', port: 443, country: 'us' },
+        { host: '216.65.13.33', port: 80, country: 'us' },
+        { host: '104.129.194.155', port: 443, country: 'us' },
+        { host: '162.223.94.164', port: 80, country: 'us' },
+        { host: '44.212.242.86', port: 80, country: 'us' },
+        { host: '104.129.194.95', port: 80, country: 'us' },
+        { host: '206.189.199.23', port: 8080, country: 'us' },
+        { host: '162.248.225.17', port: 80, country: 'us' },
+        { host: '148.72.65.36', port: 808, country: 'us' },
+        { host: '52.186.48.178', port: 8080, country: 'us' },
+        { host: '35.194.215.58', port: 80, country: 'us' },
+        
+        // Canada proxies
+        { host: '198.50.198.93', port: 3128, country: 'ca' },
+        { host: '52.60.43.64', port: 80, country: 'ca' },
+        { host: '51.222.155.142', port: 80, country: 'ca' },
+        { host: '51.161.9.43', port: 8080, country: 'ca' },
+        { host: '158.69.185.36', port: 3129, country: 'ca' },
+        
+        // UK proxies
+        { host: '18.133.137.215', port: 80, country: 'gb' },
+        { host: '35.179.75.233', port: 80, country: 'gb' },
+        { host: '51.38.191.151', port: 80, country: 'gb' },
+        { host: '46.101.6.169', port: 8000, country: 'gb' },
+        { host: '18.175.2.51', port: 80, country: 'gb' },
+        
+        // European proxies
+        { host: '94.228.130.38', port: 8080, country: 'nl' },
+        { host: '217.76.50.200', port: 8000, country: 'de' },
+        { host: '146.70.80.76', port: 80, country: 'de' },
+        { host: '95.216.230.239', port: 8080, country: 'fi' },
+        { host: '51.178.25.246', port: 80, country: 'fr' },
+        { host: '161.35.214.127', port: 80, country: 'de' },
+        { host: '161.35.214.127', port: 3128, country: 'de' },
+        { host: '54.195.11.119', port: 80, country: 'ie' },
+        
+        // Global proxies (different regions for diversity)
+        { host: '103.152.112.162', port: 80, country: 'in' },
+        { host: '58.27.233.58', port: 80, country: 'pk' },
+        { host: '116.203.27.109', port: 80, country: 'de' },
+        { host: '185.162.229.252', port: 80, country: 'nl' },
+        { host: '139.99.237.62', port: 80, country: 'au' },
+        { host: '103.117.192.14', port: 80, country: 'in' },
+        { host: '180.149.235.39', port: 8080, country: 'jp' },
+        { host: '193.239.86.249', port: 3128, country: 'ru' },
+        { host: '45.79.110.131', port: 80, country: 'jp' },
       ];
       
       // Add the fallback proxies to our new proxies list
