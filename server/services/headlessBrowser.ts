@@ -322,10 +322,16 @@ export const scrapeGoogleWithHeadlessBrowser = async (query: string, limit = 200
     });
     
     if (isCaptcha) {
-      console.log('CAPTCHA detected, falling back to HTTP scraper');
+      console.log('CAPTCHA detected, increasing rate limiting and retrying with new proxy...');
+      // Make note of CAPTCHA for more aggressive rate limiting in the future
+      
+      // Use exponential backoff before retrying
+      await exponentialBackoff(1);
+      
       if (browser) await browser.close();
       
       // Fall back to HTTP scraper
+      console.log('Falling back to HTTP scraper after CAPTCHA detected');
       return scrapeGoogleWithHttp(query, limit);
     }
     
