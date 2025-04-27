@@ -14,6 +14,10 @@ import {
   scrapeGoogleWithHttp,
   getSimilarWebsitesWithHttp
 } from './httpScraper';
+import {
+  scrapeGoogleWithSelenium,
+  getSimilarWebsitesWithSelenium
+} from './seleniumScraper';
 // Import default export from free-proxy
 import ProxyList from 'free-proxy';
 
@@ -712,7 +716,25 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
       return cachedResults;
     }
     
-    // Try headless browser next
+    // Try Selenium first (most effective against CAPTCHA)
+    try {
+      console.log(`Trying Selenium for Google scraping: "${query}"`);
+      const seleniumResults = await scrapeGoogleWithSelenium(query, limit);
+      
+      // Cache results if we found any
+      if (seleniumResults.length > 0) {
+        console.log(`Selenium succeeded with ${seleniumResults.length} results`);
+        cacheResults(cacheKey, seleniumResults);
+        return seleniumResults;
+      } else {
+        console.log(`Selenium returned 0 results, trying headless browser fallback...`);
+      }
+    } catch (seleniumError) {
+      console.error(`Error in Selenium Google scraping: ${seleniumError}`);
+      console.log(`Falling back to headless browser method...`);
+    }
+    
+    // If Selenium fails, try headless browser next
     try {
       console.log(`Trying headless browser for Google scraping: "${query}"`);
       const results = await scrapeGoogleWithHeadlessBrowser(query, limit);
@@ -730,7 +752,7 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
       console.log(`Falling back to HTTP scraping method...`);
     }
     
-    // If headless browser fails, try using HTTP scraper as fallback
+    // If both Selenium and headless browser fail, try using HTTP scraper as last resort
     try {
       console.log(`Trying HTTP scraper fallback for: "${query}"`);
       const httpResults = await scrapeGoogleWithHttp(query, limit);
