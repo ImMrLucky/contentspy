@@ -34,8 +34,8 @@ async function executePythonScript(scriptArgs: string[]): Promise<string> {
     }
     
     return stdout;
-  } catch (error) {
-    console.error(`Error executing Python script: ${error.message}`);
+  } catch (error: any) {
+    console.error(`Error executing Python script: ${error.message || 'Unknown error'}`);
     
     // Include stderr if available
     if (error.stderr) {
@@ -43,7 +43,7 @@ async function executePythonScript(scriptArgs: string[]): Promise<string> {
     }
     
     // Re-throw with improved message
-    throw new Error(`Python script execution failed: ${error.message}`);
+    throw new Error(`Python script execution failed: ${error.message || 'Unknown error'}`);
   }
 }
 

@@ -63,10 +63,10 @@ function generateRealisticHeaders() {
 }
 
 /**
- * Scrape Google search results using enhanced direct HTTP requests
+ * Scrape Google search results using enhanced direct HTTP requests with POST method
  */
 export const scrapeGoogleWithHttp = async (query: string, limit = 200): Promise<any[]> => {
-  console.log(`Starting HTTP fallback scraping for query: "${query}"`);
+  console.log(`Starting enhanced HTTP scraping for query: "${query}"`);
   const allResults: any[] = [];
   
   try {
@@ -86,7 +86,7 @@ export const scrapeGoogleWithHttp = async (query: string, limit = 200): Promise<
       let url = `https://www.google.com/search?q=${formattedQuery}&start=${start}&num=10`;
       
       // Add some randomized parameters to look more natural
-      const possibleParams = ['hl=en', 'gl=us', 'pws=0', 'filter=0'];
+      const possibleParams = ['hl=en', 'gl=us', 'pws=0', 'filter=0', 'nfpr=1', 'ie=UTF-8'];
       const selectedParams = possibleParams.filter(() => Math.random() > 0.3);
       if (selectedParams.length > 0) {
         url += '&' + selectedParams.join('&');
@@ -110,64 +110,148 @@ export const scrapeGoogleWithHttp = async (query: string, limit = 200): Promise<
           };
         }
         
-        // Make HTTP request with enhanced browser-like headers
-        const response = await axios.get(url, {
-          headers,
-          timeout: 30000,
-          maxRedirects: 5,
-          validateStatus: status => status < 500, // Accept any status < 500
-          ...proxyConfig
-        });
-        
-        // Parse the HTML response with cheerio
-        const $ = cheerio.load(response.data);
-        const pageResults: any[] = [];
-        
-        // Find all search result containers
-        // These selectors target Google search result elements
-        $('div.g, .Gx5Zad, .tF2Cxc, .yuRUbf, div[data-hveid]').each((index, element) => {
-          // Find title and link elements within each result
-          const titleEl = $(element).find('h3').first();
-          const linkEl = $(element).find('a').first();
-          const snippetEl = $(element).find('.VwiC3b, .lEBKkf, div[data-snc], .st').first();
+        // Try POST request first (less likely to be detected as automated)
+        try {
+          // Parse the URL to extract the base endpoint
+          const urlObj = new URL(url);
+          const baseUrl = `${urlObj.protocol}//${urlObj.hostname}${urlObj.pathname}`;
           
-          if (titleEl.length && linkEl.length) {
-            const title = titleEl.text().trim();
-            const link = linkEl.attr('href');
-            const snippet = snippetEl.text().trim() || '';
+          // Extract search params from URL for POST body
+          const searchParams: Record<string, string> = {};
+          urlObj.searchParams.forEach((value, key) => {
+            searchParams[key] = value;
+          });
+          
+          console.log(`Using POST request to ${baseUrl}`);
+          
+          // Make POST request with enhanced browser-like headers and form data
+          const response = await axios.post(baseUrl, searchParams, {
+            headers: {
+              ...headers,
+              'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            timeout: 30000,
+            maxRedirects: 5,
+            validateStatus: status => status < 500,
+            ...proxyConfig
+          });
+          
+          // Parse the HTML response with cheerio
+          const $ = cheerio.load(response.data);
+          const pageResults: any[] = [];
+          
+          // Find all search result containers
+          // These selectors target Google search result elements
+          $('div.g, .Gx5Zad, .tF2Cxc, .yuRUbf, div[data-hveid]').each((index, element) => {
+            // Find title and link elements within each result
+            const titleEl = $(element).find('h3').first();
+            const linkEl = $(element).find('a').first();
+            const snippetEl = $(element).find('.VwiC3b, .lEBKkf, div[data-snc], .st').first();
             
-            // Only add valid results
-            if (title && link && link.startsWith('http')) {
-              pageResults.push({
-                title,
-                link,
-                snippet,
-                position: index + 1,
-                source: 'google-http'
-              });
+            if (titleEl.length && linkEl.length) {
+              const title = titleEl.text().trim();
+              const link = linkEl.attr('href');
+              const snippet = snippetEl.text().trim() || '';
+              
+              // Only add valid results
+              if (title && link && link.startsWith('http')) {
+                pageResults.push({
+                  title,
+                  link,
+                  snippet,
+                  position: index + 1,
+                  source: 'google-http-post'
+                });
+              }
             }
-          }
-        });
-        
-        console.log(`Found ${pageResults.length} results on page ${currentPage + 1}`);
-        
-        // Filter out duplicate results and add to the results array
-        for (const result of pageResults) {
-          if (allResults.some(r => r.link === result.link)) continue;
-          allResults.push(result);
+          });
           
-          // Stop if we've reached the limit
-          if (allResults.length >= limit) break;
-        }
-        
-        // If no results on this page, break the loop
-        if (pageResults.length === 0) break;
-        
-        // Check if there's a next page button
-        const hasNextPage = $('#pnnext, a.pn').length > 0;
-        if (!hasNextPage) {
-          console.log('No more results pages found');
-          break;
+          console.log(`Found ${pageResults.length} results with POST request on page ${currentPage + 1}`);
+          
+          // Filter out duplicate results and add to the results array
+          for (const result of pageResults) {
+            if (allResults.some(r => r.link === result.link)) continue;
+            allResults.push(result);
+            
+            // Stop if we've reached the limit
+            if (allResults.length >= limit) break;
+          }
+          
+          // If no results on this page, break the loop
+          if (pageResults.length === 0) {
+            throw new Error('No results found with POST request, falling back to GET');
+          }
+          
+          // Check if there's a next page button
+          const hasNextPage = $('#pnnext, a.pn').length > 0;
+          if (!hasNextPage) {
+            console.log('No more results pages found');
+            break;
+          }
+          
+        } catch (postError: any) {
+          // If POST request fails, fall back to GET
+          console.error('POST request failed:', postError.message || 'Unknown error');
+          console.log('Falling back to GET request method...');
+          
+          // Fall back to traditional GET request
+          const response = await axios.get(url, {
+            headers,
+            timeout: 30000,
+            maxRedirects: 5,
+            validateStatus: status => status < 500,
+            ...proxyConfig
+          });
+          
+          // Parse the HTML response with cheerio
+          const $ = cheerio.load(response.data);
+          const pageResults: any[] = [];
+          
+          // Find all search result containers with more varied selectors
+          $('div.g, .Gx5Zad, .tF2Cxc, .yuRUbf, div[data-hveid], .MjjYud > div').each((index, element) => {
+            // Find title and link elements within each result
+            const titleEl = $(element).find('h3').first();
+            const linkEl = $(element).find('a[href^="http"]').first();
+            const snippetEl = $(element).find('.VwiC3b, .lEBKkf, div[data-snc], .st, .DVO7oe').first();
+            
+            if (titleEl.length && linkEl.length) {
+              const title = titleEl.text().trim();
+              const link = linkEl.attr('href');
+              const snippet = snippetEl.text().trim() || '';
+              
+              // Only add valid results
+              if (title && link && link.startsWith('http')) {
+                pageResults.push({
+                  title,
+                  link,
+                  snippet,
+                  position: index + 1,
+                  source: 'google-http-get'
+                });
+              }
+            }
+          });
+          
+          console.log(`Found ${pageResults.length} results with GET request on page ${currentPage + 1}`);
+          
+          // Add unique results to the array
+          for (const result of pageResults) {
+            if (allResults.some(r => r.link === result.link)) continue;
+            allResults.push(result);
+            
+            // Stop if we've reached the limit
+            if (allResults.length >= limit) break;
+          }
+          
+          // If no results found in this page, break the loop
+          if (pageResults.length === 0) break;
+          
+          // Check if there's a next page button
+          const hasNextPage = $('#pnnext, a.pn').length > 0;
+          if (!hasNextPage) {
+            console.log('No more results pages found');
+            break;
+          }
         }
         
         // Add a delay between pages to avoid detection
@@ -192,7 +276,7 @@ export const scrapeGoogleWithHttp = async (query: string, limit = 200): Promise<
 };
 
 /**
- * Find similar websites using HTTP requests
+ * Find similar websites using HTTP requests with POST method
  */
 export const getSimilarWebsitesWithHttp = async (domain: string): Promise<string[]> => {
   console.log(`Finding similar websites for domain: ${domain} using HTTP scraping`);
@@ -233,7 +317,20 @@ export const getSimilarWebsitesWithHttp = async (domain: string): Promise<string
           .filter(() => Math.random() > 0.5)
           .join('&');
         
-        const url = `${domain}/search?q=${formattedQuery}&num=30&${randomParams}`;
+        // Build base URL and search params for POST
+        const baseUrl = `${domain}/search`;
+        const searchParams: Record<string, string> = {
+          q: formattedQuery,
+          num: '30'
+        };
+        
+        // Add randomized params
+        randomParams.split('&').forEach(param => {
+          const [key, value] = param.split('=');
+          if (key && value) {
+            searchParams[key] = value;
+          }
+        });
         
         // Get realistic headers and a proxy
         const headers = generateRealisticHeaders();
@@ -250,51 +347,111 @@ export const getSimilarWebsitesWithHttp = async (domain: string): Promise<string
           };
         }
         
-        // Make HTTP request with enhanced anti-detection measures
-        const response = await axios.get(url, {
-          headers,
-          timeout: 30000,
-          maxRedirects: 5,
-          validateStatus: status => status < 500,
-          ...proxyConfig
-        });
-        
-        // Parse the HTML response with cheerio
-        const $ = cheerio.load(response.data);
-        const competitors: string[] = [];
-        
-        // Find all links in the search results
-        $('a[href^="http"]').each((_, element) => {
-          try {
-            const href = $(element).attr('href');
-            if (!href) return;
-            
-            // Skip Google's own links and the domain we're analyzing
-            if (href.includes('google.com') || href.includes(domainName)) return;
-            
-            // Extract domain name
-            const domain = extractDomain(href).toLowerCase();
-            
-            // Skip if already in results
-            if (competitors.includes(domain)) return;
-            
-            competitors.push(domain);
-          } catch (e) {
-            // Skip invalid URLs
-            return;
+        // Try POST request first (less likely to be detected)
+        try {
+          console.log(`Using POST request to find similar websites to ${domainName}`);
+          
+          // Make POST request with enhanced browser-like headers and form data
+          const response = await axios.post(baseUrl, searchParams, {
+            headers: {
+              ...headers,
+              'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            timeout: 30000,
+            maxRedirects: 5,
+            validateStatus: status => status < 500,
+            ...proxyConfig
+          });
+          
+          // Parse the HTML response with cheerio
+          const $ = cheerio.load(response.data);
+          const competitors: string[] = [];
+          
+          // Find all links in the search results
+          $('a[href^="http"]').each((_, element) => {
+            try {
+              const href = $(element).attr('href');
+              if (!href) return;
+              
+              // Skip Google's own links and the domain we're analyzing
+              if (href.includes('google.com') || href.includes(domainName)) return;
+              
+              // Extract domain name
+              const extractedDomain = extractDomain(href).toLowerCase();
+              
+              // Skip if already in results
+              if (competitors.includes(extractedDomain)) return;
+              
+              competitors.push(extractedDomain);
+            } catch (e) {
+              // Skip invalid URLs
+              return;
+            }
+          });
+          
+          console.log(`Found ${competitors.length} possible competitors using POST for query: "${query}"`);
+          
+          // Add unique competitors to our list
+          for (const comp of competitors) {
+            if (!allCompetitors.includes(comp) && comp !== domainName) {
+              allCompetitors.push(comp);
+            }
           }
-        });
-        
-        console.log(`Found ${competitors.length} possible competitors from query: "${query}"`);
-        
-        // Add unique competitors to our list
-        for (const comp of competitors) {
-          if (!allCompetitors.includes(comp) && comp !== domainName) {
-            allCompetitors.push(comp);
+          
+        } catch (postError: any) {
+          // If POST request fails, fall back to GET
+          console.error('POST request failed:', postError.message || 'Unknown error');
+          console.log('Falling back to GET request for similar websites...');
+          
+          // Construct URL for GET request
+          const url = `${domain}/search?q=${formattedQuery}&num=30&${randomParams}`;
+          
+          // Make GET request
+          const response = await axios.get(url, {
+            headers,
+            timeout: 30000,
+            maxRedirects: 5,
+            validateStatus: status => status < 500,
+            ...proxyConfig
+          });
+          
+          // Parse the HTML response with cheerio
+          const $ = cheerio.load(response.data);
+          const competitors: string[] = [];
+          
+          // Find all links in the search results
+          $('a[href^="http"]').each((_, element) => {
+            try {
+              const href = $(element).attr('href');
+              if (!href) return;
+              
+              // Skip Google's own links and the domain we're analyzing
+              if (href.includes('google.com') || href.includes(domainName)) return;
+              
+              // Extract domain name
+              const extractedDomain = extractDomain(href).toLowerCase();
+              
+              // Skip if already in results
+              if (competitors.includes(extractedDomain)) return;
+              
+              competitors.push(extractedDomain);
+            } catch (e) {
+              // Skip invalid URLs
+              return;
+            }
+          });
+          
+          console.log(`Found ${competitors.length} possible competitors using GET for query: "${query}"`);
+          
+          // Add unique competitors to our list
+          for (const comp of competitors) {
+            if (!allCompetitors.includes(comp) && comp !== domainName) {
+              allCompetitors.push(comp);
+            }
           }
         }
         
-        // Add a delay between queries
+        // Add a delay between queries regardless of method used
         const delay = 3000 + Math.floor(Math.random() * 5000);
         await new Promise(resolve => setTimeout(resolve, delay));
         

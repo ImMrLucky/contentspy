@@ -501,22 +501,25 @@ export const extractDomain = (url: string): string => {
 // Get similar websites using headless browser with HTTP fallback
 export const getSimilarWebsites = async (domain: string): Promise<string[]> => {
   try {
-    // Try Selenium first (most effective against CAPTCHA)
+    // Make proxies available globally for Python and other scrapers
+    global.availableProxies = availableProxies;
+    
+    // Try Python scraper first (requests-html + pyppeteer, most effective against CAPTCHA)
     try {
-      console.log(`Using Selenium for similar websites to: ${domain}`);
-      const seleniumResults = await getSimilarWebsitesWithSelenium(domain);
-      if (seleniumResults && seleniumResults.length > 0) {
-        console.log(`Found ${seleniumResults.length} similar websites using Selenium`);
-        return seleniumResults;
+      console.log(`Using Python scraper with requests-html for similar websites to: ${domain}`);
+      const pythonResults = await getSimilarWebsitesWithPython(domain);
+      if (pythonResults && pythonResults.length > 0) {
+        console.log(`Found ${pythonResults.length} similar websites using Python scraper`);
+        return pythonResults;
       } else {
-        console.log(`Selenium found 0 similar websites for ${domain}, trying next method...`);
+        console.log(`Python scraper found 0 similar websites for ${domain}, trying next method...`);
       }
-    } catch (seleniumError) {
-      console.error(`Error in Selenium scraping for similar websites: ${seleniumError}`);
+    } catch (pythonError) {
+      console.error(`Error in Python scraping for similar websites: ${pythonError}`);
       console.log(`Falling back to headless browser for similar websites...`);
     }
     
-    // Try headless browser next
+    // Try headless browser second
     try {
       console.log(`Using headless browser for similar websites to: ${domain}`);
       const results = await getSimilarWebsitesWithHeadlessBrowser(domain);
@@ -528,20 +531,41 @@ export const getSimilarWebsites = async (domain: string): Promise<string[]> => {
       }
     } catch (puppeteerError) {
       console.error(`Error in headless browser scraping for similar websites: ${puppeteerError}`);
-      console.log(`Falling back to HTTP scraping for similar websites...`);
+      console.log(`Falling back to enhanced HTTP scraping for similar websites...`);
     }
     
-    // Fallback to HTTP scraper as last resort
-    console.log(`Trying HTTP scraping for similar websites to: ${domain}`);
-    const httpResults = await getSimilarWebsitesWithHttp(domain);
-    
-    if (httpResults && httpResults.length > 0) {
-      console.log(`Found ${httpResults.length} similar websites using HTTP scraper`);
-    } else {
-      console.log(`HTTP scraper found 0 similar websites for ${domain}`);
+    // Try enhanced HTTP scraper with POST requests
+    try {
+      console.log(`Trying enhanced HTTP scraping with POST for similar websites to: ${domain}`);
+      const httpResults = await getSimilarWebsitesWithHttp(domain);
+      
+      if (httpResults && httpResults.length > 0) {
+        console.log(`Found ${httpResults.length} similar websites using enhanced HTTP scraper`);
+        return httpResults;
+      } else {
+        console.log(`Enhanced HTTP scraper found 0 similar websites for ${domain}, trying Selenium as last resort...`);
+      }
+    } catch (httpError) {
+      console.error(`Error in enhanced HTTP scraping for similar websites: ${httpError}`);
+      console.log(`Falling back to Selenium as last resort for similar websites...`);
     }
     
-    return httpResults;
+    // Try Selenium as last resort
+    try {
+      console.log(`Using Selenium as last resort for similar websites to: ${domain}`);
+      const seleniumResults = await getSimilarWebsitesWithSelenium(domain);
+      if (seleniumResults && seleniumResults.length > 0) {
+        console.log(`Found ${seleniumResults.length} similar websites using Selenium`);
+        return seleniumResults;
+      } else {
+        console.log(`Selenium found 0 similar websites for ${domain}`);
+      }
+    } catch (seleniumError) {
+      console.error(`Error in Selenium scraping for similar websites: ${seleniumError}`);
+    }
+    
+    console.log(`All methods failed to find similar websites for ${domain}`);
+    return [];
   } catch (error) {
     console.error(`Error getting similar websites: ${error}`);
     return [];
