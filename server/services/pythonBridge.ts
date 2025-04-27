@@ -72,8 +72,8 @@ export async function scrapeGoogleWithPython(query: string, limit = 200): Promis
     // If we can't parse the JSON, look for results in the output
     console.warn('Failed to parse JSON from Python output. Output was:', output);
     return [];
-  } catch (error) {
-    console.error('Error in Python scraper:', error);
+  } catch (error: any) {
+    console.error('Error in Python scraper:', error?.message || 'Unknown error');
     return [];
   }
 }
@@ -103,8 +103,8 @@ export async function getSimilarWebsitesWithPython(domain: string): Promise<stri
     // If we can't parse the JSON, look for results in the output
     console.warn('Failed to parse JSON from Python output. Output was:', output);
     return [];
-  } catch (error) {
-    console.error('Error in Python similar websites scraper:', error);
+  } catch (error: any) {
+    console.error('Error in Python similar websites scraper:', error?.message || 'Unknown error');
     return [];
   }
 }
