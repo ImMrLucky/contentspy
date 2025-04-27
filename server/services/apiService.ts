@@ -483,11 +483,24 @@ export const extractDomain = (url: string): string => {
   }
 };
 
-// Get similar websites using module
+// Get similar websites using module with fallback
 export const getSimilarWebsites = async (domain: string): Promise<string[]> => {
   try {
-    const { getSimilarWebsitesWithHeadlessBrowser } = require('./headlessBrowser');
-    return await getSimilarWebsitesWithHeadlessBrowser(domain);
+    try {
+      // First attempt with Puppeteer
+      const { getSimilarWebsitesWithHeadlessBrowser } = require('./headlessBrowser');
+      const results = await getSimilarWebsitesWithHeadlessBrowser(domain);
+      if (results && results.length > 0) {
+        return results;
+      }
+    } catch (puppeteerError) {
+      console.error(`Error in headless browser scraping for similar websites: ${puppeteerError}`);
+      console.log(`Falling back to HTTP scraping for similar websites...`);
+    }
+    
+    // Fallback to HTTP scraper if Puppeteer fails
+    const { getSimilarWebsitesWithHttp } = require('./httpScraper');
+    return await getSimilarWebsitesWithHttp(domain);
   } catch (error) {
     console.error(`Error getting similar websites: ${error}`);
     return [];
@@ -601,15 +614,38 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
     
     console.log(`No cached results found. Using headlessBrowser module for Google scraping...`);
     
-    // Use imported function from headlessBrowser module
-    const results = await scrapeGoogleWithHeadlessBrowser(query, limit);
-    
-    // Cache results if we found any
-    if (results.length > 0) {
-      cacheResults(cacheKey, results);
+    try {
+      // First try using the headless browser
+      const { scrapeGoogleWithHeadlessBrowser } = require('./headlessBrowser');
+      const results = await scrapeGoogleWithHeadlessBrowser(query, limit);
+      
+      // Cache results if we found any
+      if (results.length > 0) {
+        cacheResults(cacheKey, results);
+        return results;
+      }
+    } catch (puppeteerError) {
+      console.error(`Error in headless browser Google scraping: ${puppeteerError}`);
+      console.log(`Falling back to HTTP scraping method...`);
+      
+      // If Puppeteer fails, try using the HTTP scraper fallback
+      try {
+        const { scrapeGoogleWithHttp } = require('./httpScraper');
+        const httpResults = await scrapeGoogleWithHttp(query, limit);
+        
+        // Cache results if we found any
+        if (httpResults.length > 0) {
+          cacheResults(cacheKey, httpResults);
+        }
+        
+        return httpResults;
+      } catch (httpError) {
+        console.error(`Error in HTTP fallback scraping: ${httpError}`);
+        return [];
+      }
     }
     
-    return results;
+    return [];
   } catch (error) {
     console.error(`Error in Google scraping: ${error}`);
     return [];
