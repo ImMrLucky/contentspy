@@ -1,16 +1,69 @@
 /**
- * HTTP Scraper Services
+ * Enhanced HTTP Scraper Services
  * 
  * This module provides functionality for scraping data using HTTP requests
- * as a fallback for environments where headless browsers aren't available
+ * with advanced anti-detection measures as a fallback for when browser-based
+ * methods fail.
  */
 
 import axios from 'axios';
 import * as cheerio from 'cheerio';
+import { HttpProxyAgent } from 'http-proxy-agent';
 import { getRandomUserAgent, extractDomain } from './apiService';
 
+// Global access to proxies from apiService
+declare global {
+  var availableProxies: any[];
+}
+
 /**
- * Scrape Google search results using direct HTTP requests
+ * Helper function to get a random proxy for HTTP requests
+ */
+function getRandomHttpProxy() {
+  if (!global.availableProxies || !global.availableProxies.length) {
+    return null;
+  }
+  
+  // Filter to working proxies (those with low fail count)
+  const workingProxies = global.availableProxies.filter(p => p.failCount < 3);
+  if (workingProxies.length === 0) return null;
+  
+  // Pick a random working proxy
+  const randomIndex = Math.floor(Math.random() * workingProxies.length);
+  return workingProxies[randomIndex];
+}
+
+/**
+ * Generate realistic browser fingerprint for HTTP headers
+ */
+function generateRealisticHeaders() {
+  const userAgent = getRandomUserAgent();
+  const language = Math.random() > 0.2 ? 'en-US,en;q=0.9' : 'en-GB,en;q=0.8,en-US;q=0.6';
+  
+  // Generate a random cookie consent value
+  const now = new Date();
+  const consentDate = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+  const cookieConsent = `CONSENT=YES+cb.${consentDate}-${Math.floor(Math.random() * 20)}-p0.en+FX+${Math.floor(Math.random() * 999)};`;
+  
+  return {
+    'User-Agent': userAgent,
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    'Accept-Language': language,
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Connection': Math.random() > 0.5 ? 'keep-alive' : 'close',
+    'Cookie': cookieConsent,
+    'Upgrade-Insecure-Requests': '1',
+    'Cache-Control': Math.random() > 0.5 ? 'max-age=0' : 'no-cache',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'none',
+    'Sec-Fetch-User': '?1',
+    'DNT': Math.random() > 0.5 ? '1' : '0'
+  };
+}
+
+/**
+ * Scrape Google search results using enhanced direct HTTP requests
  */
 export const scrapeGoogleWithHttp = async (query: string, limit = 200): Promise<any[]> => {
   console.log(`Starting HTTP fallback scraping for query: "${query}"`);
@@ -40,21 +93,30 @@ export const scrapeGoogleWithHttp = async (query: string, limit = 200): Promise<
       }
       
       try {
-        console.log(`Making HTTP request to: ${url}`);
+        console.log(`Making enhanced HTTP request to: ${url}`);
         
-        // Make HTTP request with browser-like headers
+        // Get realistic headers and a proxy if available
+        const headers = generateRealisticHeaders();
+        const proxy = getRandomHttpProxy();
+        let proxyConfig = {};
+        
+        // Configure proxy if available
+        if (proxy) {
+          console.log(`Using proxy ${proxy.host}:${proxy.port} for HTTP request`);
+          const proxyUrl = `http://${proxy.host}:${proxy.port}`;
+          proxyConfig = {
+            proxy: false, // Disable axios proxy to use our custom one
+            httpAgent: new HttpProxyAgent(proxyUrl)
+          };
+        }
+        
+        // Make HTTP request with enhanced browser-like headers
         const response = await axios.get(url, {
-          headers: {
-            'User-Agent': getRandomUserAgent(),
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive',
-            'Cookie': 'CONSENT=YES+cb.20220321-17-p0.en+FX+119;',
-            'Upgrade-Insecure-Requests': '1',
-            'Cache-Control': 'max-age=0'
-          },
-          timeout: 30000
+          headers,
+          timeout: 30000,
+          maxRedirects: 5,
+          validateStatus: status => status < 500, // Accept any status < 500
+          ...proxyConfig
         });
         
         // Parse the HTML response with cheerio
@@ -154,23 +216,47 @@ export const getSimilarWebsitesWithHttp = async (domain: string): Promise<string
       console.log(`Searching for: ${query}`);
       
       try {
-        // Format the query and create the URL
+        // Format the query and create the URL with randomized parameters
         const formattedQuery = encodeURIComponent(query);
-        const url = `https://www.google.com/search?q=${formattedQuery}&num=30`;
         
-        // Make HTTP request with browser-like headers
+        // Use different Google domains to avoid patterns
+        const googleDomains = [
+          'https://www.google.com',
+          'https://www.google.co.uk',
+          'https://www.google.ca'
+        ];
+        const domain = googleDomains[Math.floor(Math.random() * googleDomains.length)];
+        
+        // Randomize search parameters
+        const possibleParams = ['hl=en', 'gl=us', 'pws=0', 'filter=0', 'nfpr=1', 'ie=UTF-8', 'safe=off'];
+        const randomParams = possibleParams
+          .filter(() => Math.random() > 0.5)
+          .join('&');
+        
+        const url = `${domain}/search?q=${formattedQuery}&num=30&${randomParams}`;
+        
+        // Get realistic headers and a proxy
+        const headers = generateRealisticHeaders();
+        const proxy = getRandomHttpProxy();
+        let proxyConfig = {};
+        
+        // Configure proxy if available
+        if (proxy) {
+          console.log(`Using proxy ${proxy.host}:${proxy.port} for HTTP request`);
+          const proxyUrl = `http://${proxy.host}:${proxy.port}`;
+          proxyConfig = {
+            proxy: false,
+            httpAgent: new HttpProxyAgent(proxyUrl)
+          };
+        }
+        
+        // Make HTTP request with enhanced anti-detection measures
         const response = await axios.get(url, {
-          headers: {
-            'User-Agent': getRandomUserAgent(),
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive',
-            'Cookie': 'CONSENT=YES+cb.20220321-17-p0.en+FX+119;',
-            'Upgrade-Insecure-Requests': '1',
-            'Cache-Control': 'max-age=0'
-          },
-          timeout: 30000
+          headers,
+          timeout: 30000,
+          maxRedirects: 5,
+          validateStatus: status => status < 500,
+          ...proxyConfig
         });
         
         // Parse the HTML response with cheerio
