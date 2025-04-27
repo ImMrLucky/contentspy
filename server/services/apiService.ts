@@ -5,9 +5,14 @@ import { CompetitorContent } from '@shared/schema';
 import { URL } from 'url';
 import { HttpProxyAgent } from 'http-proxy-agent';
 import FreeProxy from 'free-proxy';
+import puppeteer from 'puppeteer';
 
 // API Keys (Only using SimilarWeb now)
 const SIMILARWEB_API_KEY = process.env.SIMILARWEB_API_KEY || '05dbc8d629d24585947c0c0d4c521114';
+
+// Counter for emergency headless browser uses
+let emergencyBrowserFallbackCount = 0;
+const MAX_EMERGENCY_BROWSER_USES = 3; // Limit to prevent excessive resource use
 
 // Track proxies for rotation
 interface Proxy {
@@ -752,8 +757,27 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
           // Grab the proxy reference if it exists
           const proxyRef = reqConfig._proxy;
           
+          // Create custom modified headers with each request to appear different
+          headers['Accept'] = ['text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', 
+                            'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                            'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'][Math.floor(Math.random() * 3)];
+          
+          // Add randomized viewport and screen dimensions to look like real browsers
+          if (Math.random() > 0.3) {
+            const viewports = [
+              '1366x768', '1920x1080', '1536x864', '1440x900', '1280x720',
+              '1600x900', '1280x800', '1280x1024', '1024x768', '2560x1440'
+            ];
+            const viewport = viewports[Math.floor(Math.random() * viewports.length)];
+            headers['Viewport-Width'] = viewport.split('x')[0];
+            headers['Viewport-Height'] = viewport.split('x')[1];
+          }
+          
           let response;
           try {
+            // Attempt direct request with browser-like behavior
+            const cacheKey = `request_${query}_${page}_${retryAttempt}`;
+            console.log(`Trying request with user agent variation...`);
             response = await axios.get(finalUrl, combinedConfig);
             
             if (response.status === 429 || response.status === 403) {
@@ -765,8 +789,8 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
                 console.log(`Marked proxy as failed: ${proxyRef.host}:${proxyRef.port}`);
               }
               
-              // Try exponential backoff and retry if we have attempts left
-              if (await exponentialBackoff(retryAttempt, 5000, 2)) {
+              // Try exponential backoff with increased delay
+              if (await exponentialBackoff(retryAttempt, 8000, 2)) {
                 return await scrapingMethods[0](page, retryAttempt + 1);
               }
               
@@ -1338,8 +1362,92 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
     
     console.log(`Scraped ${allResults.length} Google results for "${query}" after ${totalPages} page attempts`);
     
-    // Even if we couldn't get results with this circuit breaker pass, we'll try again with 
-    // different parameters next time. Don't use any fallback data.
+    // If we couldn't get any results after multiple retries, try emergency headless browser approach
+    if (allResults.length === 0 && consecutiveFailures >= 5) {
+      console.log("All proxies failed. Attempting emergency headless browser fallback...");
+      
+      // Use a puppeteer-based approach as last resort
+      try {
+        // Launch headless browser with stealth mode
+        const browser = await puppeteer.launch({
+          headless: true,
+          args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox', 
+            '--disable-web-security',
+            '--disable-features=IsolateOrigins,site-per-process',
+            `--user-agent=${getRandomUserAgent()}`,
+          ]
+        });
+        
+        try {
+          const page = await browser.newPage();
+          
+          // Set random viewport
+          const viewports = [
+            { width: 1366, height: 768 },
+            { width: 1920, height: 1080 },
+            { width: 1536, height: 864 }
+          ];
+          const viewport = viewports[Math.floor(Math.random() * viewports.length)];
+          await page.setViewport(viewport);
+          
+          // Set cookies to bypass consent screen
+          await page.setCookie({
+            name: 'CONSENT',
+            value: 'YES+cb.20220321-17-p0.en+FX+119',
+            domain: '.google.com',
+          });
+          
+          // Navigate to Google search
+          const formattedQuery = encodeURIComponent(query);
+          console.log("Navigating to Google with headless browser...");
+          await page.goto(`https://www.google.com/search?q=${formattedQuery}&num=30&hl=en`, { 
+            waitUntil: 'networkidle2',
+            timeout: 25000
+          });
+          
+          // Extract results
+          console.log("Extracting results with headless browser...");
+          const browserResults = await page.evaluate(() => {
+            const results: any[] = [];
+            const elements = document.querySelectorAll('div.g, .Gx5Zad, .tF2Cxc, .yuRUbf, div[data-hveid]');
+            
+            elements.forEach((el, i) => {
+              const titleEl = el.querySelector('h3');
+              const linkEl = el.querySelector('a');
+              const snippetEl = el.querySelector('.VwiC3b, .lEBKkf, div[data-snc], .st');
+              
+              if (titleEl && linkEl) {
+                const title = titleEl.textContent?.trim();
+                const link = linkEl.getAttribute('href');
+                const snippet = snippetEl?.textContent?.trim() || '';
+                
+                if (title && link && link.startsWith('http')) {
+                  results.push({
+                    title,
+                    link,
+                    snippet,
+                    position: i + 1,
+                    source: 'google-headless'
+                  });
+                }
+              }
+            });
+            
+            return results;
+          });
+          
+          console.log(`Headless browser found ${browserResults.length} results`);
+          allResults.push(...browserResults);
+          
+        } finally {
+          await browser.close();
+        }
+      } catch (browserError) {
+        console.error("Error with headless browser fallback:", browserError);
+      }
+    }
     
     // Cache the results if we found anything useful
     if (allResults.length > 0) {
