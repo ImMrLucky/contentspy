@@ -14,10 +14,6 @@ import {
   scrapeGoogleWithHttp,
   getSimilarWebsitesWithHttp
 } from './httpScraper';
-import {
-  scrapeGoogleWithSerpApi,
-  getSimilarWebsitesWithSerpApi
-} from './serpApiScraper';
 // Import default export from free-proxy
 import ProxyList from 'free-proxy';
 
@@ -494,34 +490,15 @@ export const extractDomain = (url: string): string => {
   }
 };
 
-// Get similar websites using module with fallback
+// Get similar websites using headless browser with HTTP fallback
 export const getSimilarWebsites = async (domain: string): Promise<string[]> => {
   try {
-    // First try using SerpAPI (most reliable method as it bypasses CAPTCHA)
-    if (process.env.SERPAPI_KEY) {
-      try {
-        console.log(`Using SerpAPI to find similar websites for: ${domain}`);
-        const serpResults = await getSimilarWebsitesWithSerpApi(domain);
-        
-        if (serpResults && serpResults.length > 0) {
-          console.log(`SerpAPI found ${serpResults.length} similar websites for ${domain}`);
-          return serpResults;
-        } else {
-          console.log(`SerpAPI returned 0 similar websites, trying fallback methods`);
-        }
-      } catch (serpError) {
-        console.error(`Error in SerpAPI for similar websites: ${serpError}`);
-        console.log(`Falling back to other methods...`);
-      }
-    } else {
-      console.log(`No SERPAPI_KEY found, trying other methods to find similar websites...`);
-    }
-    
-    // Try headless browser next
+    // Try headless browser first (primary method)
     try {
-      console.log(`Trying headless browser for similar websites to: ${domain}`);
+      console.log(`Using headless browser for similar websites to: ${domain}`);
       const results = await getSimilarWebsitesWithHeadlessBrowser(domain);
       if (results && results.length > 0) {
+        console.log(`Found ${results.length} similar websites using headless browser`);
         return results;
       }
     } catch (puppeteerError) {
@@ -529,9 +506,17 @@ export const getSimilarWebsites = async (domain: string): Promise<string[]> => {
       console.log(`Falling back to HTTP scraping for similar websites...`);
     }
     
-    // Fallback to HTTP scraper as last resort
+    // Fallback to HTTP scraper if headless browser fails
     console.log(`Trying HTTP scraping for similar websites to: ${domain}`);
-    return await getSimilarWebsitesWithHttp(domain);
+    const httpResults = await getSimilarWebsitesWithHttp(domain);
+    
+    if (httpResults && httpResults.length > 0) {
+      console.log(`Found ${httpResults.length} similar websites using HTTP scraper`);
+    } else {
+      console.log(`HTTP scraper found 0 similar websites for ${domain}`);
+    }
+    
+    return httpResults;
   } catch (error) {
     console.error(`Error getting similar websites: ${error}`);
     return [];
@@ -643,59 +628,41 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
       return cachedResults;
     }
     
-    console.log(`No cached results found. First trying SerpAPI for reliable results...`);
+    console.log(`No cached results found. Using headless browser for Google scraping...`);
     
-    // First, try using SerpAPI (most reliable method as it bypasses CAPTCHA)
-    if (process.env.SERPAPI_KEY) {
-      try {
-        console.log(`Using SerpAPI for query: "${query}"`);
-        const serpResults = await scrapeGoogleWithSerpApi(query, limit);
-        
-        // Cache results if we found any
-        if (serpResults.length > 0) {
-          console.log(`SerpAPI succeeded with ${serpResults.length} results`);
-          cacheResults(cacheKey, serpResults);
-          return serpResults;
-        } else {
-          console.log(`SerpAPI returned 0 results, trying fallback methods`);
-        }
-      } catch (serpError) {
-        console.error(`Error in SerpAPI scraping: ${serpError}`);
-        console.log(`Falling back to other scraping methods...`);
-      }
-    } else {
-      console.log(`No SERPAPI_KEY found, trying other scraping methods...`);
-    }
-    
-    // If SerpAPI fails or isn't available, try headless browser
+    // Try headless browser first (primary method)
     try {
-      console.log(`Trying headless browser for Google scraping...`);
+      console.log(`Trying headless browser for Google scraping: "${query}"`);
       const results = await scrapeGoogleWithHeadlessBrowser(query, limit);
       
       // Cache results if we found any
       if (results.length > 0) {
+        console.log(`Headless browser succeeded with ${results.length} results`);
         cacheResults(cacheKey, results);
         return results;
+      } else {
+        console.log(`Headless browser returned 0 results, trying HTTP fallback...`);
       }
     } catch (puppeteerError) {
       console.error(`Error in headless browser Google scraping: ${puppeteerError}`);
       console.log(`Falling back to HTTP scraping method...`);
+    }
+    
+    // If headless browser fails, try using HTTP scraper as fallback
+    try {
+      console.log(`Trying HTTP scraper fallback for: "${query}"`);
+      const httpResults = await scrapeGoogleWithHttp(query, limit);
       
-      // If the headless browser fails, try using HTTP scraper
-      try {
-        console.log(`Trying HTTP scraper fallback...`);
-        const httpResults = await scrapeGoogleWithHttp(query, limit);
-        
-        // Cache results if we found any
-        if (httpResults.length > 0) {
-          cacheResults(cacheKey, httpResults);
-        }
-        
+      // Cache results if we found any
+      if (httpResults.length > 0) {
+        console.log(`HTTP scraper succeeded with ${httpResults.length} results`);
+        cacheResults(cacheKey, httpResults);
         return httpResults;
-      } catch (httpError) {
-        console.error(`Error in HTTP fallback scraping: ${httpError}`);
-        return [];
+      } else {
+        console.log(`HTTP scraper returned 0 results`);
       }
+    } catch (httpError) {
+      console.error(`Error in HTTP fallback scraping: ${httpError}`);
     }
     
     console.log(`All scraping methods failed, returning empty results`);
