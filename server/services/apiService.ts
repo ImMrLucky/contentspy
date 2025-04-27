@@ -3,9 +3,28 @@ import * as cheerio from 'cheerio';
 import natural from 'natural';
 import { CompetitorContent } from '@shared/schema';
 import { URL } from 'url';
+import { HttpProxyAgent } from 'http-proxy-agent';
+import * as proxyLists from 'proxy-lists';
+import stream from 'stream';
 
 // API Keys (Only using SimilarWeb now)
 const SIMILARWEB_API_KEY = process.env.SIMILARWEB_API_KEY || '05dbc8d629d24585947c0c0d4c521114';
+
+// Track proxies for rotation
+interface Proxy {
+  host: string;
+  port: number;
+  protocols: string[];
+  lastUsed: number;
+  failCount: number;
+  country: string;
+}
+
+// Global proxy collection
+let availableProxies: Proxy[] = [];
+let lastProxyFetch = 0;
+const PROXY_FETCH_INTERVAL = 15 * 60 * 1000; // 15 minutes
+let isInitializingProxies = false;
 
 // Very simple in-memory cache for search results to prevent repeated identical requests
 interface CacheEntry {
@@ -99,9 +118,144 @@ const getRandomUserAgent = () => {
   return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
 };
 
-// Enhanced IP rotation simulation (direct requests with different parameters)
-// Since we don't have actual proxies to use, we'll simulate IP rotation with more varied request parameters
+// Function to refresh the proxy list
+const refreshProxyList = async (): Promise<void> => {
+  if (Date.now() - lastProxyFetch < PROXY_FETCH_INTERVAL) {
+    console.log('Proxy list was refreshed recently, skipping refresh');
+    return;
+  }
+  
+  if (isInitializingProxies) {
+    console.log('Proxy refresh already in progress, skipping');
+    return;
+  }
+  
+  isInitializingProxies = true;
+  console.log('Refreshing proxy list...');
+  
+  try {
+    // Collect proxies using stream and promise
+    const proxyPromise = new Promise<Proxy[]>((resolve) => {
+      const newProxies: Proxy[] = [];
+      
+      const options = {
+        // Try to find proxies that are likely to work with Google
+        countries: ['us', 'ca', 'mx', 'br'],
+        protocols: ['http', 'https'],
+        anonymityLevels: ['anonymous', 'elite', 'high'],
+      };
+      
+      const proxyStream = proxyLists.getProxies(options);
+      
+      proxyStream.on('data', (proxies: any) => {
+        if (Array.isArray(proxies)) {
+          proxies.forEach(proxy => {
+            if (proxy && proxy.host && proxy.port) {
+              newProxies.push({
+                host: proxy.host,
+                port: proxy.port,
+                protocols: proxy.protocols || ['http'],
+                lastUsed: 0,
+                failCount: 0,
+                country: proxy.country || 'unknown'
+              });
+            }
+          });
+        }
+      });
+      
+      proxyStream.on('end', () => {
+        console.log(`Found ${newProxies.length} available proxies`);
+        resolve(newProxies);
+      });
+      
+      proxyStream.on('error', (err) => {
+        console.error('Error getting proxies:', err);
+        resolve([]);
+      });
+      
+      // Set a timeout in case the stream never ends
+      setTimeout(() => {
+        if (newProxies.length === 0) {
+          console.log('Proxy fetch timed out, resolving with empty list');
+          resolve([]);
+        } else {
+          console.log(`Proxy fetch timed out, resolving with ${newProxies.length} proxies found so far`);
+          resolve(newProxies);
+        }
+      }, 10000); // 10 second timeout
+    });
+    
+    // Wait for proxy list to be populated
+    const newProxies = await proxyPromise;
+    
+    // Add new proxies that aren't already in the list
+    let addedCount = 0;
+    newProxies.forEach(newProxy => {
+      if (!availableProxies.some(existingProxy => 
+          existingProxy.host === newProxy.host && 
+          existingProxy.port === newProxy.port)) {
+        availableProxies.push(newProxy);
+        addedCount++;
+      }
+    });
+    
+    console.log(`Added ${addedCount} new proxies to the pool, total: ${availableProxies.length}`);
+    lastProxyFetch = Date.now();
+  } catch (error) {
+    console.error('Error refreshing proxy list:', error);
+  } finally {
+    isInitializingProxies = false;
+  }
+};
+
+// Get a working proxy with rotation and fallback
+const getProxy = (): Proxy | null => {
+  if (availableProxies.length === 0) {
+    console.log('No proxies available');
+    return null;
+  }
+  
+  // Sort proxies by last used time and fail count
+  availableProxies.sort((a, b) => {
+    // Prioritize proxies with fewer failures
+    if (a.failCount !== b.failCount) {
+      return a.failCount - b.failCount;
+    }
+    // Then prioritize proxies that haven't been used recently
+    return a.lastUsed - b.lastUsed;
+  });
+  
+  // Get the first proxy from the sorted list
+  const proxy = availableProxies[0];
+  
+  // Update last used time
+  proxy.lastUsed = Date.now();
+  
+  return proxy;
+};
+
+// Mark a proxy as failed
+const markProxyAsFailed = (proxy: Proxy): void => {
+  const proxyIndex = availableProxies.findIndex(p => 
+    p.host === proxy.host && p.port === proxy.port);
+    
+  if (proxyIndex >= 0) {
+    availableProxies[proxyIndex].failCount++;
+    
+    // Remove proxy if it has failed too many times
+    if (availableProxies[proxyIndex].failCount >= 3) {
+      console.log(`Removing proxy ${proxy.host}:${proxy.port} due to too many failures`);
+      availableProxies.splice(proxyIndex, 1);
+    }
+  }
+};
+
+// Enhanced IP rotation with proxy support
 const getRequestConfig = (attempt = 0) => {
+  // Get a proxy if available
+  const proxy = getProxy();
+  
   // More varied parameters to make requests look different
   const timeZones = ['EST', 'PST', 'CST', 'MST', 'GMT', 'CET', 'JST', 'AEST', 'IST', 'EET'];
   const languages = ['en-US', 'en-GB', 'en-CA', 'en', 'en-AU', 'en-NZ', 'en-ZA', 'en-IE'];
@@ -115,8 +269,8 @@ const getRequestConfig = (attempt = 0) => {
   const platformIndex = (attempt + randomOffset * 3) % platforms.length;
   const encodingIndex = attempt % encodings.length;
   
-  // Generate semi-random configurations
-  return {
+  // Config object to return
+  const config: any = {
     headers: {
       'User-Agent': getRandomUserAgent(),
       'Accept-Language': languages[languageIndex] + ';q=0.9',
@@ -133,6 +287,21 @@ const getRequestConfig = (attempt = 0) => {
       'Expires': '0'
     }
   };
+  
+  // Add proxy if available
+  if (proxy) {
+    const proxyProtocol = proxy.protocols.includes('https') ? 'https' : 'http';
+    const proxyUrl = `${proxyProtocol}://${proxy.host}:${proxy.port}`;
+    
+    // Add proxy agent to config
+    config.httpAgent = new HttpProxyAgent(proxyUrl);
+    config.proxy = false; // Disable Axios's built-in proxy handling
+    config._proxy = proxy; // Save proxy reference for failure tracking
+    
+    console.log(`Using proxy: ${proxy.host}:${proxy.port} (country: ${proxy.country})`);
+  }
+  
+  return config;
 };
 
 // Extract keywords from text using Natural
