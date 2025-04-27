@@ -498,20 +498,135 @@ export const extractDomain = (url: string): string => {
   }
 };
 
-// Get similar websites using SimilarWeb API
+// Get similar websites using headless browser to search for "competitors of [domain]" and "sites like [domain]"
 export const getSimilarWebsites = async (domain: string): Promise<string[]> => {
   try {
-    const response = await axios.get(`https://api.similarweb.com/v1/similar-sites/${domain}`, {
-      params: {
-        api_key: SIMILARWEB_API_KEY
-      }
+    console.log(`Finding similar websites for domain: ${domain} using headless browser scraping`);
+    const domainName = domain.replace(/^www\./, '');
+    
+    // Create a list of search queries to find competitors
+    const competitorQueries = [
+      `competitors of ${domainName}`,
+      `sites like ${domainName}`,
+      `alternatives to ${domainName}`,
+      `companies similar to ${domainName}`
+    ];
+    
+    // Launch a headless browser
+    const browser = await puppeteer.launch({
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-infobars',
+        '--window-position=0,0',
+        '--ignore-certificate-errors',
+        '--disable-extensions',
+        '--disable-dev-shm-usage'
+      ]
     });
     
-    if (response.data && response.data.similar_sites) {
-      return response.data.similar_sites.map((site: any) => site.url).slice(0, 5);
+    try {
+      // Create a new browser page with random viewport
+      const page = await browser.newPage();
+      
+      // Set a random viewport size
+      const viewportSizes = [
+        { width: 1366, height: 768 },
+        { width: 1920, height: 1080 },
+        { width: 1536, height: 864 },
+        { width: 1440, height: 900 }
+      ];
+      const viewport = viewportSizes[Math.floor(Math.random() * viewportSizes.length)];
+      await page.setViewport(viewport);
+      
+      // Set user agent and other browser headers
+      await page.setUserAgent(getRandomUserAgent());
+      await page.setExtraHTTPHeaders({
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
+      });
+      
+      // Set cookies to bypass Google consent screen
+      await page.setCookie({
+        name: 'CONSENT',
+        value: 'YES+cb.20220321-17-p0.en+FX+119',
+        domain: '.google.com',
+      });
+      
+      const allCompetitors: string[] = [];
+      
+      // Try each competitor query, stop once we find enough results
+      for (const query of competitorQueries) {
+        if (allCompetitors.length >= 15) break;
+        
+        console.log(`Searching for: ${query}`);
+        
+        // Navigate to Google with the search query
+        const formattedQuery = encodeURIComponent(query);
+        await page.goto(`https://www.google.com/search?q=${formattedQuery}&num=30`, {
+          waitUntil: 'networkidle2',
+          timeout: 30000
+        });
+        
+        // Wait a moment to ensure page is loaded
+        await page.waitForTimeout(2000 + Math.floor(Math.random() * 2000));
+        
+        // Extract domain names from search results
+        const competitors = await page.evaluate((searchDomain) => {
+          const results: string[] = [];
+          
+          // Find all search result links
+          const links = Array.from(document.querySelectorAll('a[href^="http"]'));
+          
+          for (const link of links) {
+            try {
+              const href = link.getAttribute('href');
+              if (!href) continue;
+              
+              // Skip Google's own links and the domain we're analyzing
+              if (href.includes('google.com') || 
+                  href.includes(searchDomain)) continue;
+              
+              // Extract domain name
+              const url = new URL(href);
+              let domain = url.hostname.toLowerCase();
+              
+              // Remove www. prefix
+              domain = domain.replace(/^www\./, '');
+              
+              // Skip if already in results
+              if (results.includes(domain)) continue;
+              
+              results.push(domain);
+            } catch (e) {
+              // Skip invalid URLs
+              continue;
+            }
+          }
+          
+          return results;
+        }, domainName);
+        
+        console.log(`Found ${competitors.length} possible competitors from query: "${query}"`);
+        
+        // Add unique competitors to our list
+        for (const comp of competitors) {
+          if (!allCompetitors.includes(comp) && comp !== domainName) {
+            allCompetitors.push(comp);
+          }
+        }
+        
+        // Add a random delay between queries
+        await page.waitForTimeout(3000 + Math.floor(Math.random() * 5000));
+      }
+      
+      console.log(`Found a total of ${allCompetitors.length} competitor domains for ${domain}`);
+      return allCompetitors.slice(0, 15); // Return at most 15 domains
+      
+    } finally {
+      await browser.close();
     }
-    
-    return [];
   } catch (error) {
     console.error(`Error getting similar websites for ${domain}:`, error);
     return [];
@@ -665,20 +780,54 @@ export const scrapeGoogleSearchResults = async (query: string, limit = 200): Pro
       return cachedResults;
     }
     
-    // Apply an initial delay to mimic more human-like behavior
-    // This helps avoid immediate detection as automated traffic
-    await randomDelay(3000, 7000);
+    console.log(`No cached results found. Launching headless browser for Google scraping...`);
+    return await scrapeGoogleWithHeadlessBrowser(query, limit);
+  } catch (error) {
+    console.error(`Error in Google scraping: ${error}`);
+    return [];
+  }
+};
+
+// New method: Scrape Google search results using Puppeteer headless browser
+const scrapeGoogleWithHeadlessBrowser = async (query: string, limit = 200): Promise<any[]> => {
+  console.log(`Starting Puppeteer headless browser for query: "${query}"`);
+  const allResults: any[] = [];
+  let browser = null;
+  
+  try {
+    // Launch a headless browser with stealth mode settings
+    browser = await puppeteer.launch({
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-infobars',
+        '--window-position=0,0',
+        '--ignore-certificate-errors',
+        '--ignore-certificate-errors-spki-list',
+        '--disable-web-security',
+        '--disable-features=IsolateOrigins,site-per-process',
+        '--disable-site-isolation-trials',
+        '--disable-extensions',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--disable-gpu'
+      ]
+    });
     
-    // Initialize our proxy list if needed
-    await ensureProxiesInitialized();
+    // Create a new browser page
+    const page = await browser.newPage();
     
-    // We need to make multiple requests to get 200 results (Google shows 100 max per page)
-    const allResults: any[] = [];
-    
-    // Circuit breaker pattern variables to handle rate limiting
-    let circuitBreakerTripped = false;
-    let consecutiveFailures = 0;
-    const MAX_CONSECUTIVE_FAILURES = 5;
+    // Use a random viewport size to look more like a real user
+    const viewportSizes = [
+      { width: 1366, height: 768 },
+      { width: 1920, height: 1080 },
+      { width: 1536, height: 864 },
+      { width: 1440, height: 900 },
+      { width: 1280, height: 720 },
+    ];
+    const viewport = viewportSizes[Math.floor(Math.random() * viewportSizes.length)];
+    await page.setViewport(viewport);
     
     // Track which methods work best
     const methodSuccessCount = [0, 0, 0];
