@@ -88,8 +88,45 @@ const BROWSER_CONFIG: puppeteer.LaunchOptions = {
 };
 
 // Helper function to get a new browser instance
+// Get a proxy from the pool
+async function getProxy() {
+  try {
+    // Simple random proxy selection from our fallback list
+    const fallbackProxies = [
+      { host: '34.82.132.72', port: 80 }, // Replace with actual proxies if needed
+      { host: '127.0.0.1', port: 80 }
+    ];
+    
+    const randomIndex = Math.floor(Math.random() * fallbackProxies.length);
+    return fallbackProxies[randomIndex];
+  } catch (error) {
+    console.error('Error getting proxy:', error);
+    return null;
+  }
+}
+
 async function getBrowser() {
   try {
+    // Try to get a proxy
+    const proxy = await getProxy();
+    
+    if (proxy) {
+      console.log(`Using proxy: ${proxy.host}:${proxy.port}`);
+      
+      // Launch with proxy settings
+      const launchOptions = {
+        ...BROWSER_CONFIG,
+        args: [
+          ...BROWSER_CONFIG.args,
+          `--proxy-server=${proxy.host}:${proxy.port}`
+        ]
+      };
+      
+      return await puppeteer.launch(launchOptions);
+    }
+    
+    // Fallback to direct connection if no proxy available
+    console.log('No proxy available, connecting directly');
     return await puppeteer.launch(BROWSER_CONFIG);
   } catch (error) {
     console.error('Error launching Puppeteer browser:', error);
@@ -293,48 +330,107 @@ export const scrapeGoogleWithHeadlessBrowser = async (query: string, limit = 200
         await new Promise(r => setTimeout(r, 1000 + Math.random() * 2000));
       }
       
-      // Extract organic search results from the page
+      // Extract organic search results from the page with a more robust approach
       const pageResults = await page.evaluate(() => {
         const organicResults: any[] = [];
         
-        // Target organic result elements
-        const resultDivs = document.querySelectorAll('div.g:not(.kno-kp)');
+        // Use multiple selectors for broader compatibility with Google's layout changes
+        const resultSelectors = [
+          // Standard organic result containers
+          'div.g:not(.kno-kp)',
+          // Modern layout variations
+          '.Gx5Zad', '.tF2Cxc', '.yuRUbf', 
+          // Various other result container formats
+          'div[data-sokoban-container]', 
+          'div[data-hveid]',
+          // Fallback to any div containing an h3 and link
+          'div:has(h3):has(a)'
+        ];
         
-        let position = organicResults.length + 1;
-        
-        resultDivs.forEach(div => {
-          // Skip if this doesn't look like a standard organic result
-          if (!div.querySelector('h3') || !div.querySelector('a')) {
-            return;
+        // Find all possible result containers using different selector strategies
+        let resultElements: Element[] = [];
+        for (const selector of resultSelectors) {
+          const elements = document.querySelectorAll(selector);
+          if (elements.length > 0) {
+            resultElements = [...resultElements, ...Array.from(elements)];
           }
-          
-          // Extract information
-          const titleElement = div.querySelector('h3');
-          const linkElement = div.querySelector('a');
-          
-          // Skip if we can't find essential elements
-          if (!titleElement || !linkElement) return;
-          
-          const title = titleElement.textContent || '';
-          const link = linkElement.getAttribute('href') || '';
-          
-          // Filter out non-http links
-          if (!link.startsWith('http')) return;
-          
-          // Extract snippet text
-          const snippetElement = div.querySelector('div[style*="line-height"]') || 
-                                 div.querySelector('div[style*="max-width"]') || 
-                                 div.querySelector('span.st');
-          const snippet = snippetElement ? snippetElement.textContent || '' : '';
-          
-          organicResults.push({
-            title,
-            link,
-            snippet,
-            position
-          });
-          
-          position++;
+        }
+        
+        // Filter out duplicates (elements might match multiple selectors)
+        resultElements = Array.from(new Set(resultElements));
+        
+        let position = 1;
+        
+        resultElements.forEach(div => {
+          try {
+            // Multi-tier heading selection strategy
+            const headingSelectors = ['h3', 'h3 a', 'a h3', 'a[data-ved] h3', '[role="heading"]'];
+            let titleElement = null;
+            
+            for (const selector of headingSelectors) {
+              titleElement = div.querySelector(selector);
+              if (titleElement) break;
+            }
+            
+            // Multi-tier link selection strategy
+            const linkSelectors = ['a[ping]', 'a[data-ved]', 'a[href^="http"]', 'h3 a', 'a:has(h3)', 'a'];
+            let linkElement = null;
+            
+            for (const selector of linkSelectors) {
+              linkElement = div.querySelector(selector);
+              if (linkElement) break;
+            }
+            
+            // Skip if we can't find essential elements
+            if (!titleElement || !linkElement) return;
+            
+            // Get title text with fallbacks
+            const title = titleElement.textContent?.trim() || linkElement.textContent?.trim() || '';
+            
+            // Get link with validation
+            let link = linkElement.getAttribute('href') || '';
+            
+            // Process link if it's a Google redirect
+            if (link.startsWith('/url?') || link.includes('/url?')) {
+              const url = new URL(link, 'https://www.google.com');
+              link = url.searchParams.get('q') || url.searchParams.get('url') || link;
+            }
+            
+            // Filter out non-http links
+            if (!link.startsWith('http')) return;
+            
+            // Multi-tier snippet selection strategy
+            const snippetSelectors = [
+              'div[style*="line-height"]', 'div[style*="max-width"]', 
+              'span.st', '.VwiC3b', '.lEBKkf', 'div[data-snc]',
+              'div[class*="lyLwlc"]', '[data-content-feature="1"]',
+              'div:not(:has(h3)):not(:has(a)):not(:empty)'
+            ];
+            
+            let snippetElement = null;
+            for (const selector of snippetSelectors) {
+              snippetElement = div.querySelector(selector);
+              if (snippetElement) break;
+            }
+            
+            const snippet = snippetElement ? snippetElement.textContent?.trim() || '' : '';
+            
+            // Add to results if title and link are valid
+            if (title && link) {
+              organicResults.push({
+                title,
+                link,
+                snippet,
+                position,
+                source: 'google-puppeteer'
+              });
+              
+              position++;
+            }
+          } catch (error) {
+            // Skip this element if there's an error processing it
+            console.error('Error processing search result element:', error);
+          }
         });
         
         return organicResults;
@@ -484,49 +580,123 @@ export const getSimilarWebsitesWithHeadlessBrowser = async (domain: string): Pro
         continue;
       }
       
-      // Extract domains from search results
+      // Extract domains from search results with enhanced extraction
       const extractedDomains = await page.evaluate((targetDomain: string) => {
         const domains: string[] = [];
         
-        // Get all links on the page
-        const links = Array.from(document.querySelectorAll('a'));
+        // More targeted approach - find search result containers first
+        const resultSelectors = [
+          'div.g:not(.kno-kp)', '.Gx5Zad', '.tF2Cxc', '.yuRUbf', 
+          'div[data-sokoban-container]', 'div[data-hveid]'
+        ];
         
-        links.forEach(link => {
-          const href = link.getAttribute('href') || '';
-          if (!href.startsWith('http')) return;
-          
-          try {
-            // Extract domain from URL
-            const url = new URL(href);
-            let domain = url.hostname;
-            
-            // Normalize domain (remove www. prefix)
-            domain = domain.replace(/^www\./, '');
-            
-            // Filter out Google's own domains and the domain we're analyzing
-            if (domain.includes('google.com') || domain === targetDomain) {
-              return;
-            }
-            
-            // Filter out common non-competitor domains
-            const excludedDomains = [
-              'wikipedia.org', 'twitter.com', 'facebook.com', 'linkedin.com',
-              'instagram.com', 'youtube.com', 'pinterest.com', 'reddit.com', 
-              'quora.com', 'medium.com', 'github.com', 'mozilla.org'
-            ];
-            
-            if (excludedDomains.some(excluded => domain.includes(excluded))) {
-              return;
-            }
-            
-            // Add domain if it's not already in the list
-            if (!domains.includes(domain)) {
-              domains.push(domain);
-            }
-          } catch (error) {
-            // Skip invalid URLs
+        // Process all result containers to extract potential competitor URLs
+        let resultContainers: Element[] = [];
+        for (const selector of resultSelectors) {
+          const containers = document.querySelectorAll(selector);
+          if (containers.length > 0) {
+            resultContainers = [...resultContainers, ...Array.from(containers)];
           }
-        });
+        }
+        
+        // Filter out duplicates
+        resultContainers = Array.from(new Set(resultContainers));
+        
+        // First try to get links from specific result containers
+        if (resultContainers.length > 0) {
+          resultContainers.forEach(container => {
+            const links = container.querySelectorAll('a[href^="http"]');
+            links.forEach(link => {
+              try {
+                let href = link.getAttribute('href') || '';
+                
+                // Process Google redirect links
+                if (href.startsWith('/url?') || href.includes('/url?')) {
+                  const url = new URL(href, 'https://www.google.com');
+                  href = url.searchParams.get('q') || url.searchParams.get('url') || href;
+                }
+                
+                if (!href.startsWith('http')) return;
+                
+                // Extract and process domain
+                const url = new URL(href);
+                let domain = url.hostname.toLowerCase();
+                
+                // Normalize domain (remove www. prefix)
+                domain = domain.replace(/^www\./, '');
+                
+                // Filter out Google's own domains and the domain we're analyzing
+                if (domain.includes('google.') || domain === targetDomain) {
+                  return;
+                }
+                
+                // Filter out common non-competitor domains and low-quality results
+                const excludedDomains = [
+                  'wikipedia.org', 'twitter.com', 'facebook.com', 'linkedin.com',
+                  'instagram.com', 'youtube.com', 'pinterest.com', 'reddit.com', 
+                  'quora.com', 'medium.com', 'github.com', 'mozilla.org',
+                  'bing.com', 'yahoo.com', 'yandex.com', 'duckduckgo.com',
+                  'baidu.com', 'amazon.com', 'ebay.com', 'etsy.com'
+                ];
+                
+                if (excludedDomains.some(excluded => domain.includes(excluded))) {
+                  return;
+                }
+                
+                // Add domain if it's not already in the list
+                if (!domains.includes(domain)) {
+                  domains.push(domain);
+                }
+              } catch (error) {
+                // Skip invalid URLs
+              }
+            });
+          });
+        }
+        
+        // If we couldn't find domains from result containers, 
+        // fall back to scanning all links on the page
+        if (domains.length === 0) {
+          const links = Array.from(document.querySelectorAll('a[href^="http"]'));
+          
+          links.forEach(link => {
+            try {
+              let href = link.getAttribute('href') || '';
+              if (!href.startsWith('http')) return;
+              
+              // Extract domain
+              const url = new URL(href);
+              let domain = url.hostname.toLowerCase();
+              
+              // Normalize domain (remove www. prefix)
+              domain = domain.replace(/^www\./, '');
+              
+              // Apply the same filtering as above
+              if (domain.includes('google.') || domain === targetDomain) {
+                return;
+              }
+              
+              const excludedDomains = [
+                'wikipedia.org', 'twitter.com', 'facebook.com', 'linkedin.com',
+                'instagram.com', 'youtube.com', 'pinterest.com', 'reddit.com', 
+                'quora.com', 'medium.com', 'github.com', 'mozilla.org',
+                'bing.com', 'yahoo.com', 'yandex.com', 'duckduckgo.com',
+                'baidu.com', 'amazon.com', 'ebay.com', 'etsy.com'
+              ];
+              
+              if (excludedDomains.some(excluded => domain.includes(excluded))) {
+                return;
+              }
+              
+              // Add domain if not already in list
+              if (!domains.includes(domain)) {
+                domains.push(domain);
+              }
+            } catch (error) {
+              // Skip invalid URLs
+            }
+          });
+        }
         
         return domains;
       }, domain);
