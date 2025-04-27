@@ -1,9 +1,8 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { insertWebsiteAnalysisSchema } from "@shared/schema";
 import { z } from "zod";
-import { 
+import {
   processCompetitorContent,
   generateInsights,
   generateRecommendations,
@@ -54,94 +53,105 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Extract domain from URL
       const domain = extractDomain(url);
       
-      // First quickly return a response with preliminary data to avoid timeout
-      // This will allow the UI to update while we continue processing in the background
-      // We'll create default data structure with placeholders
-      const preliminaryInsights = {
-        topContentType: "Analyzing...",
-        avgContentLength: "Calculating...",
-        keyCompetitors: "Identifying...",
-        contentGapScore: "50",
-        keywordClusters: [
-          { name: "Loading", count: 0, color: "blue" }
-        ]
-      };
-      
-      const preliminaryRecommendations = [
-        {
-          title: "Analysis in progress...",
-          description: "We're analyzing your competitors to generate recommendations. Results will appear shortly.",
-          keywords: ["analyzing"],
-          color: "blue"
-        }
-      ];
-      
-      // Send preliminary response to client
-      res.status(200).json({ 
-        analysis,
-        competitorContent: [],
-        insights: preliminaryInsights,
-        recommendations: preliminaryRecommendations
-      });
-      
-      // Process competitor content using real APIs in the background
+      // Process competitor content using real APIs
       console.log(`Starting competitor content analysis for ${domain}`);
       
-      // Continue processing in the background
-      (async () => {
-        try {
-          // Find competitor domains
-          const competitorDomains = await findCompetitorDomains(domain, 10, keywords);
+      // Create industry-specific fallback domains (used when scraping fails)
+      const industryDomains = {
+        'insurance': ['statefarm.com', 'geico.com', 'progressive.com', 'allstate.com', 'libertymutual.com'],
+        'finance': ['bankofamerica.com', 'chase.com', 'wellsfargo.com', 'capitalone.com', 'discover.com'],
+        'health': ['mayoclinic.org', 'webmd.com', 'healthline.com', 'medlineplus.gov', 'nih.gov'],
+        'tech': ['microsoft.com', 'apple.com', 'google.com', 'samsung.com', 'dell.com'],
+        'ecommerce': ['amazon.com', 'walmart.com', 'target.com', 'bestbuy.com', 'etsy.com'],
+        'general': ['blog.hubspot.com', 'forbes.com', 'entrepreneur.com', 'businessinsider.com', 'medium.com']
+      };
+      
+      // Determine industry from domain/keywords
+      let industry = 'general';
+      const lowerDomain = domain.toLowerCase();
+      const lowerKeywords = keywords?.toLowerCase() || '';
+      
+      if (lowerDomain.includes('insur') || lowerDomain.includes('policy') || 
+          lowerKeywords.includes('insurance') || lowerKeywords.includes('coverage')) {
+        industry = 'insurance';
+      } else if (lowerDomain.includes('bank') || lowerDomain.includes('finance') || 
+                 lowerDomain.includes('invest') || lowerDomain.includes('money')) {
+        industry = 'finance';
+      } else if (lowerDomain.includes('health') || lowerDomain.includes('medical') || 
+                 lowerDomain.includes('care') || lowerDomain.includes('hospital')) {
+        industry = 'health';
+      } else if (lowerDomain.includes('tech') || lowerDomain.includes('software') || 
+                 lowerDomain.includes('app') || lowerDomain.includes('digital')) {
+        industry = 'tech';
+      } else if (lowerDomain.includes('shop') || lowerDomain.includes('store') || 
+                 lowerDomain.includes('market') || lowerDomain.includes('buy')) {
+        industry = 'ecommerce';
+      }
+      
+      // Try to find competitor domains
+      let competitorDomains;
+      try {
+        competitorDomains = await findCompetitorDomains(domain, 5, keywords);
+        console.log(`Found ${competitorDomains.length} competitor domains from search`);
+      } catch (error) {
+        console.error("Error finding competitor domains:", error);
+        competitorDomains = [];
+      }
+      
+      // If no competitor domains found, use fallbacks
+      if (!competitorDomains || competitorDomains.length === 0) {
+        console.log(`No competitor domains found via search, using ${industry} industry fallbacks`);
+        competitorDomains = industryDomains[industry] || industryDomains.general;
+      }
+      
+      // Process content from competitor domains
+      const competitorResults = await processCompetitorContent(domain, competitorDomains, keywords);
+      
+      // Store competitor content in database
+      const storedResults = await Promise.all(
+        competitorResults.map(async (result) => {
+          const content = await storage.createCompetitorContent({
+            analysisId: analysis.id,
+            title: result.title || "",
+            url: result.url || "",
+            domain: result.domain || "",
+            publishDate: result.publishDate,
+            description: result.description,
+            trafficLevel: result.trafficLevel,
+          });
           
-          // Then process content from those domains
-          const competitorResults = await processCompetitorContent(domain, competitorDomains, keywords);
-          
-          // Store competitor content and keywords in database
-          const storedResults = await Promise.all(
-            competitorResults.map(async (result) => {
-              const content = await storage.createCompetitorContent({
-                analysisId: analysis.id,
-                title: result.title || "",
-                url: result.url || "",
-                domain: result.domain || "",
-                publishDate: result.publishDate,
-                description: result.description,
-                trafficLevel: result.trafficLevel,
+          // Store keywords
+          const storedKeywords = await Promise.all(
+            (result.keywords || []).map(async (keyword: string) => {
+              return storage.createKeyword({
+                contentId: content.id,
+                keyword,
               });
-              
-              // Store keywords for this content
-              const storedKeywords = await Promise.all(
-                (result.keywords || []).map(async (keyword: string) => {
-                  return storage.createKeyword({
-                    contentId: content.id,
-                    keyword,
-                  });
-                })
-              );
-              
-              return {
-                ...content,
-                keywords: storedKeywords.map(k => k.keyword)
-              };
             })
           );
           
-          console.log(`Stored ${storedResults.length} competitor content items`);
-          
-          // Generate insights from the competitor content
-          const insights = generateInsights(competitorResults);
-          
-          // Generate content recommendations based on insights
-          const recommendations = generateRecommendations(competitorResults, insights);
-          
-          console.log('Analysis completed - data processing finished');
-          
-          // We don't return a response here since we already sent one
-          // This is just background processing now
-        } catch (error) {
-          console.error("Error in background processing:", error);
-        }
-      })();
+          return {
+            ...content,
+            keywords: storedKeywords.map(k => k.keyword)
+          };
+        })
+      );
+      
+      console.log(`Stored ${storedResults.length} competitor content items`);
+      
+      // Generate insights from the competitor content
+      const insights = generateInsights(competitorResults);
+      
+      // Generate content recommendations based on insights
+      const recommendations = generateRecommendations(competitorResults, insights);
+      
+      // Return the full analysis results
+      return res.status(200).json({
+        analysis,
+        competitorContent: storedResults,
+        insights,
+        recommendations
+      });
     } catch (error) {
       console.error("Error in /api/analyze:", error);
       return res.status(500).json({ message: "Error analyzing website" });
