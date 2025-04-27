@@ -19,6 +19,7 @@ export interface IStorage {
   createUser(user: InsertUser): Promise<User>;
   
   createAnalysis(analysis: InsertWebsiteAnalysis): Promise<WebsiteAnalysis>;
+  getAnalysis(id: number): Promise<WebsiteAnalysis | undefined>;
   getAnalysisByUrl(url: string): Promise<WebsiteAnalysis | undefined>;
   getAnalysisByUserId(userId: number): Promise<WebsiteAnalysis[]>;
   
@@ -77,6 +78,10 @@ export class MemStorage implements IStorage {
     const newAnalysis: WebsiteAnalysis = { ...analysis, id, createdAt, userId };
     this.analyses.set(id, newAnalysis);
     return newAnalysis;
+  }
+  
+  async getAnalysis(id: number): Promise<WebsiteAnalysis | undefined> {
+    return this.analyses.get(id);
   }
   
   async getAnalysisByUrl(url: string): Promise<WebsiteAnalysis | undefined> {
