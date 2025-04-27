@@ -59,8 +59,8 @@ const requestHistory = {
 };
 
 // Constants for browser configuration
-const BROWSER_CONFIG = {
-  headless: 'new', // Use the new Puppeteer headless mode
+const BROWSER_CONFIG: puppeteer.LaunchOptions = {
+  headless: true, // Use headless mode
   args: [
     '--no-sandbox',
     '--disable-setuid-sandbox',
@@ -366,6 +366,17 @@ export const getSimilarWebsitesWithHeadlessBrowser = async (domain: string): Pro
   let browser: puppeteer.Browser | null = null;
   const similarSites: string[] = [];
   
+  // Check if we're being rate limited
+  if (requestHistory.isRateLimited()) {
+    const waitTime = requestHistory.getTimeToWait();
+    console.log(`Rate limit reached. Need to wait ${Math.ceil(waitTime/1000)} seconds before making another request.`);
+    console.log(`Falling back to HTTP scraper to avoid waiting.`);
+    return getSimilarWebsitesWithHttp(domain);
+  }
+  
+  // Track this request for rate limiting
+  requestHistory.addRequest();
+  
   try {
     browser = await getBrowser();
     const page = await browser.newPage();
@@ -464,10 +475,11 @@ export const getSimilarWebsitesWithHeadlessBrowser = async (domain: string): Pro
       
       console.log(`Found ${extractedDomains.length} potential competitors from query: "${query}"`);
       
-      // Add a delay between queries (2-4 seconds)
-      const delay = 2000 + Math.floor(Math.random() * 2000);
-      console.log(`Waiting ${delay}ms before next query...`);
-      await new Promise(resolve => setTimeout(resolve, delay));
+      // Add a significant random delay between queries to avoid rate limiting
+      await randomDelay(
+        RATE_LIMIT.minDelayBetweenRequests, 
+        RATE_LIMIT.maxDelayBetweenRequests
+      );
     }
     
     console.log(`Successfully found ${similarSites.length} similar websites for ${domain}`);
